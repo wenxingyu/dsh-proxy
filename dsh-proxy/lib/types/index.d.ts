@@ -6,19 +6,21 @@
  * exposure — so this plugin is the sanctioned way to serve the surface beyond
  * loopback, with authentication in front.
  *
- * The plugin also mounts the `/dsh-proxy` generic Connection RPC channel:
- * `status` reads the running proxy, `update` persists a settings patch (target
- * upstream port, username, password) into `$DSH_HOME/dsh-proxy.json` and
- * restarts the forwarding service — the backend of the settings section.
+ * The plugin also mounts the settings API as an exact `POST /api/dsh-proxy`
+ * route on Connection's shared `/api` channel: `status` reads the running
+ * proxy, `update` persists a settings patch (target upstream port, username,
+ * password) into `$DSH_HOME/dsh-proxy.json` and restarts the forwarding
+ * service — the backend of the settings section. Connection owns the carrier,
+ * so the route inherits its Host/Origin trust fence and browser session check.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
-import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection';
+import { ProxyController } from './controller.ts';
 export { lanAddresses, startLanProxy } from './proxy.ts';
 export type { LanProxyHandle, LanProxyOptions } from './proxy.ts';
 /** Stable Cordis plugin name (the Loader entry and package name). */
 export declare const name = "@smanx/dsh-proxy";
-/** Services required before load: the web server (upstream port source) and the Connection RPC registry. */
+/** Services required before load: the web server (upstream port source) and the Connection carrier. */
 export declare const inject: string[];
 /** Plugin configuration, validated at load by the Loader. */
 export interface Config {
@@ -52,29 +54,23 @@ export declare const Config: z<Schemastery.ObjectS<{
     password: z<string, string>;
 }>>;
 /**
- * Register one channel on the host Connection RPC registry, owned by this
- * plugin's fiber (so unloading the plugin removes the route).
+ * Build the handler mounted at {@link LAN_PROXY_PATH} on Connection's shared
+ * `/api` channel. Connection has already applied its Host/Origin fence and the
+ * browser session check by the time a request arrives here, so the handler only
+ * decodes the plugin's JSON envelope and dispatches one endpoint.
  *
- * `ctx.connection.rpc.handle` is the documented shorthand, but harness
- * 0.1.5-rc.x resolves the `webServer` service needed to mount the route from
- * the *Connection service's own fiber* (the shorthand registers through the
- * service's context). That plugin now reaches `webServer` through a nested
- * `ctx.inject` scope instead of declaring it in its top-level `inject`, so the
- * shorthand throws `cannot get property "webServer" without inject` and the
- * whole tree fails to load. Calling the registry's `register` with the caller
- * as owner restores the intended contract: this plugin does inject `webServer`,
- * and the channel stays owned by its fiber.
+ * A malformed body answers `400`; endpoint-level failures — including an
+ * unknown endpoint — answer `200` with the same `{ ok: false }` envelope so the
+ * settings section renders them like any other result.
  *
- * @param ctx - host cordis context (channel owner and `webServer` consumer).
- * @param channel - absolute channel prefix, e.g. `/dsh-proxy`.
- * @param handler - decoded endpoint handler.
- * @returns disposer removing the channel route.
+ * @param controller - the proxy controller this route drives.
+ * @returns Fetch handler for the plugin's exact route.
  */
-export declare function registerRpcChannel(ctx: Context, channel: string, handler: ConnectionRpcHandler): () => void;
+export declare function createLanProxyRoute(controller: ProxyController): (request: Request) => Promise<Response>;
 /**
- * Mount the proxy and the RPC channel as effects on this plugin's fiber:
+ * Mount the proxy and the settings route as effects on this plugin's fiber:
  * unloading the plugin closes the listener, every upgraded socket, and the
- * channel.
+ * route.
  * @param ctx - host cordis context.
  * @param config - validated plugin configuration (schema defaults applied).
  */

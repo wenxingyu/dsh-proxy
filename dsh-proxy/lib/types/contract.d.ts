@@ -1,19 +1,53 @@
 /**
- * Shared wire contract between the host plugin and its settings section:
- * the generic Connection RPC channel name, the endpoint names, and the
- * status/update payload shapes. Imported by both halves (type-only on the
- * client side — erased at build).
+ * Shared wire contract between the host plugin and its settings section: the
+ * exact Fetch route the host mounts on Connection's shared `/api` channel, the
+ * endpoint names carried in the request body, and the status/update payload
+ * shapes. Imported by both halves (type-only on the client side — erased at
+ * build).
  */
-/** Generic Connection RPC channel mounted by the host plugin. */
-export declare const RPC_CHANNEL = "/dsh-proxy";
+/**
+ * Exact POST route the host plugin owns on Connection's shared `/api` channel.
+ * Connection's own `/api` carrier applies the Host/Origin trust fence and the
+ * browser session check before dispatching here, so the section only has to be
+ * an authenticated same-origin caller.
+ */
+export declare const LAN_PROXY_PATH = "/api/dsh-proxy";
 /** Endpoint: read the current proxy status. */
-export declare const RPC_STATUS_ENDPOINT = "status";
+export declare const ENDPOINT_STATUS = "status";
 /** Endpoint: apply a settings patch and restart the forwarding service. */
-export declare const RPC_UPDATE_ENDPOINT = "update";
+export declare const ENDPOINT_UPDATE = "update";
 /** Endpoint: start the forwarding service (idempotent). */
-export declare const RPC_START_ENDPOINT = "start";
+export declare const ENDPOINT_START = "start";
 /** Endpoint: stop the forwarding service (the response is answered before the listener closes). */
-export declare const RPC_STOP_ENDPOINT = "stop";
+export declare const ENDPOINT_STOP = "stop";
+/** Request body the settings section POSTs to {@link LAN_PROXY_PATH}. */
+export interface LanProxyRequest {
+    /** Channel-owned endpoint name, e.g. `status`. */
+    endpoint: string;
+    /** Endpoint-owned request payload; `{}` when the endpoint takes none. */
+    payload: unknown;
+}
+/** Carrier-neutral failure envelope returned by every endpoint. */
+export interface LanProxyFailure {
+    /** Stable machine-readable code. */
+    code: string;
+    /** Human-readable reason, surfaced by the section. */
+    message: string;
+    /** Structured detail (validation issues); empty when not applicable. */
+    details: object;
+}
+/**
+ * Result envelope shared by every endpoint. Request-level problems (malformed
+ * body, unknown endpoint) answer a non-2xx status; endpoint-level failures keep
+ * the same shape at HTTP 200 so the section renders them like any other result.
+ */
+export type LanProxyResult<T> = {
+    ok: true;
+    value: T;
+} | {
+    ok: false;
+    error: LanProxyFailure;
+};
 /** Read-only status the settings section shows. */
 export interface LanProxyStatus {
     /** Interface the proxy binds (0.0.0.0 = LAN reachable). */
@@ -32,10 +66,11 @@ export interface LanProxyStatus {
     username: string;
     /**
      * The CURRENT password, so the settings form can pre-fill (write back) the
-     * credential fields and empty means "set empty". The status channel is
-     * loopback-authority and sits behind the proxy's auth gate, so a caller
-     * reaching it already holds the same credentials (or is on the host, where
-     * the persisted $DSH_HOME file is equally readable).
+     * credential fields and empty means "set empty". The endpoint sits on
+     * Connection's `/api` channel behind the browser session check, and it is
+     * also behind the proxy's own auth gate, so a caller reaching it already
+     * holds the same credentials (or is on the host, where the persisted
+     * $DSH_HOME file is equally readable).
      */
     password: string;
     /** Whether the auth gate is on (both credentials non-empty). */

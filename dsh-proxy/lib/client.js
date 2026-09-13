@@ -30,11 +30,11 @@ module.exports = __toCommonJS(index_exports);
 var import_react = require("react");
 
 // src/contract.ts
-var RPC_CHANNEL = "/dsh-proxy";
-var RPC_STATUS_ENDPOINT = "status";
-var RPC_UPDATE_ENDPOINT = "update";
-var RPC_START_ENDPOINT = "start";
-var RPC_STOP_ENDPOINT = "stop";
+var LAN_PROXY_PATH = "/api/dsh-proxy";
+var ENDPOINT_STATUS = "status";
+var ENDPOINT_UPDATE = "update";
+var ENDPOINT_START = "start";
+var ENDPOINT_STOP = "stop";
 
 // src/client/SettingsSection.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
@@ -65,7 +65,7 @@ function EyeOffIcon() {
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("line", { x1: "2", x2: "22", y1: "2", y2: "22" })
   ] });
 }
-function SettingsSection({ rpc, t }) {
+function SettingsSection({ call, t }) {
   const [phase, setPhase] = (0, import_react.useState)("loading");
   const phaseRef = (0, import_react.useRef)("loading");
   const [status, setStatus] = (0, import_react.useState)(null);
@@ -94,7 +94,7 @@ function SettingsSection({ rpc, t }) {
     applyPhase("loading");
     setStatusError(null);
     try {
-      const result = await rpc.call(RPC_CHANNEL, RPC_STATUS_ENDPOINT, {});
+      const result = await call(ENDPOINT_STATUS, {});
       if (result.ok) {
         const next = result.value;
         setStatus(next);
@@ -108,11 +108,11 @@ function SettingsSection({ rpc, t }) {
         applyPhase("error");
       }
     } catch (err) {
-      console.error("[dsh-proxy] status RPC failed:", err);
+      console.error("[dsh-proxy] status call failed:", err);
       setStatusError(err instanceof Error ? err.message : String(err));
       applyPhase("error");
     }
-  }, [rpc, applyPhase, applyStatusToForm]);
+  }, [call, applyPhase, applyStatusToForm]);
   (0, import_react.useEffect)(() => {
     void loadStatus();
     const timer = window.setTimeout(() => {
@@ -125,11 +125,7 @@ function SettingsSection({ rpc, t }) {
     setControlError(null);
     setControlMessage(null);
     try {
-      const result = await rpc.call(
-        RPC_CHANNEL,
-        action === "start" ? RPC_START_ENDPOINT : RPC_STOP_ENDPOINT,
-        {}
-      );
+      const result = await call(action === "start" ? ENDPOINT_START : ENDPOINT_STOP, {});
       if (result.ok) {
         const next = result.value;
         setStatus(next);
@@ -147,7 +143,7 @@ function SettingsSection({ rpc, t }) {
     } finally {
       setControlling(false);
     }
-  }, [rpc, t]);
+  }, [call, t]);
   const submit = async (event) => {
     event.preventDefault();
     setSaving(true);
@@ -168,7 +164,7 @@ function SettingsSection({ rpc, t }) {
         username: username.trim(),
         password
       };
-      const result = await rpc.call(RPC_CHANNEL, RPC_UPDATE_ENDPOINT, payload);
+      const result = await call(ENDPOINT_UPDATE, payload);
       if (result.ok) {
         const value = result.value;
         setStatus(value.status);
@@ -717,22 +713,57 @@ function adoptStyles() {
   document.head.appendChild(style);
 }
 
+// src/client/transport.ts
+var TRANSPORT_FAILURE = "transport";
+function carrierFailure(message, details = {}) {
+  return { ok: false, error: { code: TRANSPORT_FAILURE, message, details } };
+}
+async function readEnvelope(response) {
+  try {
+    const body = await response.json();
+    if (typeof body === "object" && body !== null && typeof body.ok === "boolean") {
+      return body;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+var callLanProxy = async (endpoint, payload) => {
+  const body = { endpoint, payload: payload ?? {} };
+  let response;
+  try {
+    response = await fetch(LAN_PROXY_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    return carrierFailure(error instanceof Error ? error.message : String(error));
+  }
+  const envelope = await readEnvelope(response);
+  if (envelope !== null) return envelope;
+  if (!response.ok) {
+    const detail = response.statusText.length > 0 ? `${response.status} ${response.statusText}` : String(response.status);
+    return carrierFailure(detail, { status: response.status });
+  }
+  return carrierFailure("response body is not a result envelope");
+};
+
 // src/client/index.ts
-var inject = ["slots", "locale", "connection"];
+var inject = ["slots", "locale"];
 function apply(ctx) {
   adoptStyles();
   console.info("[dsh-proxy] bundle loaded");
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-proxy: dictionaries");
   const t = ctx.locale.bind(NS);
-  const connection = ctx.get("connection");
-  const rpc = connection.rpc;
   ctx.slots.inject("settings.section", () => ctx.slots.register({
     name: "settings.section",
     id: "dsh-proxy",
     order: 70,
     label: () => t("nav"),
     locale: NS,
-    inject: () => ({ rpc })
+    inject: () => ({ call: callLanProxy })
   }, SettingsSection));
 }
 return module.exports; } });

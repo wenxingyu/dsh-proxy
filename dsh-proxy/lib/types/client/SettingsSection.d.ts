@@ -1,13 +1,13 @@
 import type { PropsLocale, PropsRuntime, InjectFace } from '@deepseek-ai/dsh-client-ui-slots';
-import type { ClientConnectionRpc } from '@deepseek-ai/dsh-client-connection/client';
-/** Injected business face: the generic Connection RPC caller. */
+import type { LanProxyCall } from './transport.ts';
+/** Injected business face: the caller for this plugin's own `/api` route. */
 export interface SettingsSectionInjected {
-    rpc: ClientConnectionRpc;
+    call: LanProxyCall;
 }
 /** Full section props: runtime share + injected face + the locale seat. */
 export type SettingsSectionProps = PropsRuntime<'settings.section'> & InjectFace<SettingsSectionInjected> & PropsLocale<'dsh-proxy'>;
 /**
  * Render the section.
- * @param props - runtime share, the injected rpc caller, and `t`.
+ * @param props - runtime share, the injected endpoint caller, and `t`.
  */
-export declare function SettingsSection({ rpc, t }: SettingsSectionProps): import("react").JSX.Element;
+export declare function SettingsSection({ call, t }: SettingsSectionProps): import("react").JSX.Element;

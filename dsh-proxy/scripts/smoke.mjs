@@ -147,7 +147,7 @@ async function main() {
 /**
  * Plugin-contract phase: drive the BUNDLED apply() (lib/index.cjs — the same
  * artifact the profile loads) against a fake cordis ctx, exercising the
- * /dsh-proxy RPC channel, the settings persistence, and the restart path
+ * /api/dsh-proxy Fetch route, the settings persistence, and the restart path
  * end to end without the web app. $DSH_HOME is redirected to a temp dir so
  * the smoke never touches the user's real persisted config.
  */
@@ -170,9 +170,9 @@ async function pluginContractPhase() {
     const fakeCtx = {
       webServer: { port: UPSTREAM, host: '127.0.0.1' },
       connection: {
-        rpc: {
-          handle: (channel, handler, options) => {
-            registered = { channel, handler, options }
+        fetch: {
+          register: (route) => {
+            registered = route
             return async () => {}
           },
         },
@@ -191,13 +191,26 @@ async function pluginContractPhase() {
     const proxyDisposer = await effectFns[0]()
     const rpcCleanup = effectFns[1]()
     check(
-      'RPC channel registered as /dsh-proxy with loopback authority',
-      registered?.channel === '/dsh-proxy' && registered?.options?.authority === 'loopback',
+      'settings route registered as POST /api/dsh-proxy with a buffered body',
+      registered?.path === '/api/dsh-proxy'
+        && registered?.methods?.includes('POST') === true
+        && registered?.requestBody === 'buffered'
+        && typeof registered?.fetch === 'function',
     )
 
-    const status1 = await registered.handler('status', undefined, new AbortController().signal)
+    /** POST one endpoint through the registered route and decode the envelope. */
+    const callRoute = async (endpoint, payload = {}) => {
+      const response = await registered.fetch(new Request('http://127.0.0.1/api/dsh-proxy', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint, payload }),
+      }))
+      return response.json()
+    }
+
+    const status1 = await callRoute('status')
     check(
-      'RPC status returns ok with a bound port and green lights',
+      'status returns ok with a bound port and green lights',
       status1?.ok === true
         && typeof status1.value?.listenPort === 'number'
         && status1.value?.listenPort > 0
@@ -206,18 +219,14 @@ async function pluginContractPhase() {
       JSON.stringify(status1),
     )
 
-    const updated = await registered.handler(
-      'update',
-      { username: 'smoke-user', password: 'smoke-pass' },
-      new AbortController().signal,
-    )
+    const updated = await callRoute('update', { username: 'smoke-user', password: 'smoke-pass' })
     check(
-      'RPC update rotates credentials and restarts',
+      'update rotates credentials and restarts',
       updated?.ok === true && updated.value?.status?.username === 'smoke-user',
       JSON.stringify(updated),
     )
 
-    const status2 = await registered.handler('status', undefined, new AbortController().signal)
+    const status2 = await callRoute('status')
     check(
       'status reflects the new username and persisted flag',
       status2?.ok === true && status2.value?.username === 'smoke-user' && status2.value?.persisted === true,
@@ -229,40 +238,32 @@ async function pluginContractPhase() {
       persisted.username === 'smoke-user' && persisted.password === 'smoke-pass',
     )
 
-    const conflict = await registered.handler(
-      'update',
-      { listenPort: status2.value.upstreamPort },
-      new AbortController().signal,
-    )
+    const conflict = await callRoute('update', { listenPort: status2.value.upstreamPort })
     check('listen port equal to the default service port rejected', conflict?.ok === false, JSON.stringify(conflict))
 
-    const cleared = await registered.handler(
-      'update',
-      { username: '', password: '' },
-      new AbortController().signal,
-    )
+    const cleared = await callRoute('update', { username: '', password: '' })
     check(
       'clearing credentials disables password login (set-empty semantics)',
       cleared?.ok === true && cleared.value?.status?.authEnabled === false && cleared.value?.status?.password === '',
       JSON.stringify(cleared),
     )
-    const reopened = await registered.handler('update', { username: 'smoke-user', password: 'smoke-pass' }, new AbortController().signal)
+    const reopened = await callRoute('update', { username: 'smoke-user', password: 'smoke-pass' })
     check(
       're-setting both credentials re-enables password login',
       reopened?.ok === true && reopened.value?.status?.authEnabled === true,
     )
 
-    const stopped = await registered.handler('stop', {}, new AbortController().signal)
+    const stopped = await callRoute('stop')
     check(
-      'RPC stop answers with the proxy stopped',
+      'stop answers with the proxy stopped',
       stopped?.ok === true && stopped.value?.proxyListening === false,
       JSON.stringify(stopped),
     )
     // Let the deferred listener close, then bring it back up.
     await new Promise((resolve) => setTimeout(resolve, 400))
-    const started = await registered.handler('start', {}, new AbortController().signal)
+    const started = await callRoute('start')
     check(
-      'RPC start brings the proxy back up',
+      'start brings the proxy back up',
       started?.ok === true && started.value?.proxyListening === true,
       JSON.stringify(started),
     )

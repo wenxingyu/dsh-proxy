@@ -1,9 +1,9 @@
 /**
  * The settings page section for the LAN proxy: shows the running port and
  * forward target, and edits the target upstream port, username, and password.
- * Saving calls the host `/dsh-proxy` `update` endpoint, which persists the
+ * Saving calls the host `/api/dsh-proxy` `update` endpoint, which persists the
  * patch and restarts the forwarding service; the returned status re-renders
- * the card. All RPC results are rendered, never thrown to the shell.
+ * the card. Every endpoint result is rendered, never thrown to the shell.
  *
  * Status loading is phase-driven ('loading' | 'ok' | 'error'): the failure
  * banner only ever appears after a real rejection, never during the in-flight
@@ -13,22 +13,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import type { PropsLocale, PropsRuntime, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ClientConnectionRpc } from '@deepseek-ai/dsh-client-connection/client'
 import {
-  RPC_CHANNEL,
-  RPC_START_ENDPOINT,
-  RPC_STATUS_ENDPOINT,
-  RPC_STOP_ENDPOINT,
-  RPC_UPDATE_ENDPOINT,
+  ENDPOINT_START,
+  ENDPOINT_STATUS,
+  ENDPOINT_STOP,
+  ENDPOINT_UPDATE,
   type LanProxyStatus,
   type LanProxyUpdatePayload,
   type LanProxyUpdateResult,
 } from '../contract.ts'
 import type { LanProxyKey } from './locales.ts'
+import type { LanProxyCall } from './transport.ts'
 
-/** Injected business face: the generic Connection RPC caller. */
+/** Injected business face: the caller for this plugin's own `/api` route. */
 export interface SettingsSectionInjected {
-  rpc: ClientConnectionRpc
+  call: LanProxyCall
 }
 
 /** Full section props: runtime share + injected face + the locale seat. */
@@ -84,9 +83,9 @@ function EyeOffIcon(): ReactNode {
 
 /**
  * Render the section.
- * @param props - runtime share, the injected rpc caller, and `t`.
+ * @param props - runtime share, the injected endpoint caller, and `t`.
  */
-export function SettingsSection({ rpc, t }: SettingsSectionProps) {
+export function SettingsSection({ call, t }: SettingsSectionProps) {
   const [phase, setPhase] = useState<StatusPhase>('loading')
   const phaseRef = useRef<StatusPhase>('loading')
   const [status, setStatus] = useState<LanProxyStatus | null>(null)
@@ -122,10 +121,7 @@ export function SettingsSection({ rpc, t }: SettingsSectionProps) {
     applyPhase('loading')
     setStatusError(null)
     try {
-      // The host envelope schema requires the `payload` field to be present,
-      // and JSON.stringify drops undefined-valued keys — an explicit empty
-      // object keeps the wire message valid.
-      const result = await rpc.call(RPC_CHANNEL, RPC_STATUS_ENDPOINT, {})
+      const result = await call(ENDPOINT_STATUS, {})
       if (result.ok) {
         const next = result.value as LanProxyStatus
         setStatus(next)
@@ -139,11 +135,11 @@ export function SettingsSection({ rpc, t }: SettingsSectionProps) {
         applyPhase('error')
       }
     } catch (err) {
-      console.error('[dsh-proxy] status RPC failed:', err)
+      console.error('[dsh-proxy] status call failed:', err)
       setStatusError(err instanceof Error ? err.message : String(err))
       applyPhase('error')
     }
-  }, [rpc, applyPhase, applyStatusToForm])
+  }, [call, applyPhase, applyStatusToForm])
 
   useEffect(() => {
     void loadStatus()
@@ -161,11 +157,7 @@ export function SettingsSection({ rpc, t }: SettingsSectionProps) {
     setControlError(null)
     setControlMessage(null)
     try {
-      const result = await rpc.call(
-        RPC_CHANNEL,
-        action === 'start' ? RPC_START_ENDPOINT : RPC_STOP_ENDPOINT,
-        {},
-      )
+      const result = await call(action === 'start' ? ENDPOINT_START : ENDPOINT_STOP, {})
       if (result.ok) {
         const next = result.value as LanProxyStatus
         setStatus(next)
@@ -186,7 +178,7 @@ export function SettingsSection({ rpc, t }: SettingsSectionProps) {
     } finally {
       setControlling(false)
     }
-  }, [rpc, t])
+  }, [call, t])
 
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
@@ -213,7 +205,7 @@ export function SettingsSection({ rpc, t }: SettingsSectionProps) {
         username: username.trim(),
         password,
       }
-      const result = await rpc.call(RPC_CHANNEL, RPC_UPDATE_ENDPOINT, payload)
+      const result = await call(ENDPOINT_UPDATE, payload)
       if (result.ok) {
         const value = result.value as LanProxyUpdateResult
         setStatus(value.status)

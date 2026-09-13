@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The LAN-proxy settings section presentation: the status card renders from
- * the host `status` RPC, the form submits an update payload (and restarts the
+ * the host `status` endpoint, the form submits an update payload (and restarts the
  * service), invalid ports are rejected locally, and transport failures surface
  * as the unreachable banner.
  */
@@ -12,14 +12,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsSection, type SettingsSectionProps } from '../src/client/SettingsSection.tsx'
 import { zh, type LanProxyKey } from '../src/client/locales.ts'
 import {
-  RPC_CHANNEL,
-  RPC_START_ENDPOINT,
-  RPC_STATUS_ENDPOINT,
-  RPC_STOP_ENDPOINT,
-  RPC_UPDATE_ENDPOINT,
+  ENDPOINT_START,
+  ENDPOINT_STATUS,
+  ENDPOINT_STOP,
+  ENDPOINT_UPDATE,
   type LanProxyStatus,
 } from '../src/contract.ts'
-import type { ClientConnectionRpc } from '@deepseek-ai/dsh-client-connection/client'
+import type { LanProxyCall } from '../src/client/transport.ts'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = false
 
@@ -38,28 +37,26 @@ const STATUS: LanProxyStatus = {
   persisted: false,
 }
 
-function makeRpc(over: {
-  status?: (channel: string, endpoint: string, payload: unknown) => Promise<unknown>
-  update?: (channel: string, endpoint: string, payload: unknown) => Promise<unknown>
+function makeCall(over: {
+  status?: (endpoint: string, payload: unknown) => Promise<unknown>
+  update?: (endpoint: string, payload: unknown) => Promise<unknown>
   control?: (endpoint: string, payload: unknown) => Promise<unknown>
-} = {}): { rpc: ClientConnectionRpc; calls: Array<{ channel: string; endpoint: string; payload: unknown }> } {
-  const calls: Array<{ channel: string; endpoint: string; payload: unknown }> = []
-  const rpc = {
-    call: vi.fn((channel: string, endpoint: string, payload: unknown) => {
-      calls.push({ channel, endpoint, payload })
-      if (endpoint === RPC_STATUS_ENDPOINT && over.status) return over.status(channel, endpoint, payload)
-      if (endpoint === RPC_UPDATE_ENDPOINT && over.update) return over.update(channel, endpoint, payload)
-      if ((endpoint === RPC_START_ENDPOINT || endpoint === RPC_STOP_ENDPOINT) && over.control) {
-        return over.control(endpoint, payload)
-      }
-      return Promise.resolve({ ok: true, value: STATUS })
-    }),
-  } as unknown as ClientConnectionRpc
-  return { rpc, calls }
+} = {}): { call: LanProxyCall; calls: Array<{ endpoint: string; payload: unknown }> } {
+  const calls: Array<{ endpoint: string; payload: unknown }> = []
+  const call = vi.fn((endpoint: string, payload: unknown) => {
+    calls.push({ endpoint, payload })
+    if (endpoint === ENDPOINT_STATUS && over.status) return over.status(endpoint, payload)
+    if (endpoint === ENDPOINT_UPDATE && over.update) return over.update(endpoint, payload)
+    if ((endpoint === ENDPOINT_START || endpoint === ENDPOINT_STOP) && over.control) {
+      return over.control(endpoint, payload)
+    }
+    return Promise.resolve({ ok: true, value: STATUS })
+  }) as unknown as LanProxyCall
+  return { call, calls }
 }
 
-function props(rpc: ClientConnectionRpc): SettingsSectionProps {
-  return { rpc, t, close: () => {} } as unknown as SettingsSectionProps
+function props(call: LanProxyCall): SettingsSectionProps {
+  return { call, t, close: () => {} } as unknown as SettingsSectionProps
 }
 
 function mount(element: ReactElement): { root: Root; container: HTMLDivElement } {
@@ -96,8 +93,8 @@ afterEach(() => {
 
 describe('status card', () => {
   it('renders both ports with green lights, plus the auth state', async () => {
-    const { rpc } = makeRpc()
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    const { call } = makeCall()
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     const text = mounted.container.textContent ?? ''
     expect(text).toContain('0.0.0.0:3081')
@@ -109,17 +106,17 @@ describe('status card', () => {
     expect(text).toContain('已启用')
     // The status RPC must carry an explicit (present) payload field — the
     // host envelope schema rejects a dropped undefined payload key.
-    expect(rpc.call).toHaveBeenCalledWith(RPC_CHANNEL, RPC_STATUS_ENDPOINT, {})
+    expect(call).toHaveBeenCalledWith(ENDPOINT_STATUS, {})
   })
 
   it('lights both ports red when the proxy is down and the target is unreachable', async () => {
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       status: () => Promise.resolve({
         ok: true,
         value: { ...STATUS, proxyListening: false, upstreamReachable: false },
       }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     const text = mounted.container.textContent ?? ''
     expect(text).toContain('未运行')
@@ -128,17 +125,17 @@ describe('status card', () => {
   })
 
   it('shows the unreachable banner when the status RPC fails', async () => {
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       status: () => Promise.reject(new Error('transport down')),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     expect(mounted.container.textContent ?? '').toContain('无法连接代理服务')
   })
 
   it('shows a loading hint instead of the failure banner while the status RPC is in flight', async () => {
-    const { rpc } = makeRpc()
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    const { call } = makeCall()
+    mounted = mount(<SettingsSection {...props(call)} />)
     const text = mounted.container.textContent ?? ''
     expect(text).toContain('加载中')
     expect(text).not.toContain('无法连接代理服务')
@@ -148,10 +145,10 @@ describe('status card', () => {
 
   it('recovers via the retry button after a transient failure', async () => {
     let failFirst = true
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       status: () => (failFirst ? Promise.reject(new Error('transient')) : Promise.resolve({ ok: true, value: STATUS })),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     expect(mounted.container.textContent ?? '').toContain('无法连接代理服务')
     failFirst = false
@@ -169,14 +166,14 @@ describe('start/stop controls', () => {
     Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes(label)) as HTMLButtonElement
 
   it('disables start while running and stop while stopped', async () => {
-    mounted = mount(<SettingsSection {...props(makeRpc().rpc)} />)
+    mounted = mount(<SettingsSection {...props(makeCall().call)} />)
     await flush()
     expect(controlButton(mounted.container, '启动').disabled).toBe(true)
     expect(controlButton(mounted.container, '停止').disabled).toBe(false)
 
     mounted.root.unmount()
-    const stopped = makeRpc({ status: () => Promise.resolve({ ok: true, value: { ...STATUS, proxyListening: false } }) })
-    mounted = mount(<SettingsSection {...props(stopped.rpc)} />)
+    const stopped = makeCall({ status: () => Promise.resolve({ ok: true, value: { ...STATUS, proxyListening: false } }) })
+    mounted = mount(<SettingsSection {...props(stopped.call)} />)
     await flush()
     expect(controlButton(mounted.container, '启动').disabled).toBe(false)
     expect(controlButton(mounted.container, '停止').disabled).toBe(true)
@@ -185,10 +182,10 @@ describe('start/stop controls', () => {
   it('stops and starts the proxy through the control buttons', async () => {
     let running = true
     const stoppedStatus = { ...STATUS, proxyListening: false }
-    const { rpc, calls } = makeRpc({
+    const { call, calls } = makeCall({
       status: () => Promise.resolve({ ok: true, value: running ? STATUS : stoppedStatus }),
       control: (endpoint) => {
-        if (endpoint === RPC_STOP_ENDPOINT) {
+        if (endpoint === ENDPOINT_STOP) {
           running = false
           return Promise.resolve({ ok: true, value: stoppedStatus })
         }
@@ -196,27 +193,27 @@ describe('start/stop controls', () => {
         return Promise.resolve({ ok: true, value: STATUS })
       },
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
 
     controlButton(mounted.container, '停止').click()
     await flush()
-    expect(calls.some((call) => call.endpoint === RPC_STOP_ENDPOINT)).toBe(true)
+    expect(calls.some((call) => call.endpoint === ENDPOINT_STOP)).toBe(true)
     expect(mounted.container.textContent ?? '').toContain('代理服务已停止')
     expect(controlButton(mounted.container, '启动').disabled).toBe(false)
 
     controlButton(mounted.container, '启动').click()
     await flush()
-    expect(calls.some((call) => call.endpoint === RPC_START_ENDPOINT)).toBe(true)
+    expect(calls.some((call) => call.endpoint === ENDPOINT_START)).toBe(true)
     expect(mounted.container.textContent ?? '').toContain('代理服务已启动')
     expect(controlButton(mounted.container, '停止').disabled).toBe(false)
   })
 
   it('surfaces a control failure without crashing', async () => {
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       control: () => Promise.resolve({ ok: false, error: { code: 'internal', message: 'boom', details: {} } }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     controlButton(mounted.container, '停止').click()
     await flush()
@@ -225,15 +222,15 @@ describe('start/stop controls', () => {
 
   it('never reports "started" when the start response is not actually listening', async () => {
     const stoppedStatus = { ...STATUS, proxyListening: false }
-    const { rpc, calls } = makeRpc({
+    const { call, calls } = makeCall({
       status: () => Promise.resolve({ ok: true, value: stoppedStatus }),
       control: () => Promise.resolve({ ok: true, value: stoppedStatus }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     controlButton(mounted.container, '启动').click()
     await flush()
-    expect(calls.some((call) => call.endpoint === RPC_START_ENDPOINT)).toBe(true)
+    expect(calls.some((call) => call.endpoint === ENDPOINT_START)).toBe(true)
     const text = mounted.container.textContent ?? ''
     expect(text).not.toContain('代理服务已启动')
     expect(text).toContain('更换代理服务端口')
@@ -243,10 +240,10 @@ describe('start/stop controls', () => {
 describe('update form', () => {
   it('pre-fills the fields with the current values and submits the full payload', async () => {
     const updated = { ...STATUS, listenPort: 3091, username: 'alice' }
-    const { rpc, calls } = makeRpc({
+    const { call, calls } = makeCall({
       update: () => Promise.resolve({ ok: true, value: { status: updated, notice: 'saved-restarted', message: '已保存并重启转发服务' } }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
 
     const inputs = mounted.container.querySelectorAll('input')
@@ -260,8 +257,8 @@ describe('update form', () => {
     submitForm(mounted.container)
     await flush()
 
-    const updateCall = calls.find((call) => call.endpoint === RPC_UPDATE_ENDPOINT)
-    expect(updateCall).toEqual({ channel: RPC_CHANNEL, endpoint: RPC_UPDATE_ENDPOINT, payload: { listenPort: 3091, username: 'alice', password: 's3cret' } })
+    const updateCall = calls.find((call) => call.endpoint === ENDPOINT_UPDATE)
+    expect(updateCall).toEqual({ endpoint: ENDPOINT_UPDATE, payload: { listenPort: 3091, username: 'alice', password: 's3cret' } })
     expect(mounted.container.textContent ?? '').toContain('已保存并重启转发服务')
     expect(mounted.container.textContent ?? '').toContain('0.0.0.0:3091')
     // After saving, the form is re-seeded with the returned status.
@@ -271,10 +268,10 @@ describe('update form', () => {
 
   it('submits empty strings when credentials are cleared (set-empty semantics)', async () => {
     const cleared = { ...STATUS, username: '', password: '', authEnabled: false }
-    const { rpc, calls } = makeRpc({
+    const { call, calls } = makeCall({
       update: () => Promise.resolve({ ok: true, value: { status: cleared, notice: 'saved-restarted', message: '已保存并重启转发服务' } }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
 
     const inputs = mounted.container.querySelectorAll('input')
@@ -284,20 +281,20 @@ describe('update form', () => {
     submitForm(mounted.container)
     await flush()
 
-    const updateCall = calls.find((call) => call.endpoint === RPC_UPDATE_ENDPOINT)
-    expect(updateCall).toEqual({ channel: RPC_CHANNEL, endpoint: RPC_UPDATE_ENDPOINT, payload: { listenPort: 3081, username: '', password: '' } })
+    const updateCall = calls.find((call) => call.endpoint === ENDPOINT_UPDATE)
+    expect(updateCall).toEqual({ endpoint: ENDPOINT_UPDATE, payload: { listenPort: 3081, username: '', password: '' } })
     expect(mounted.container.textContent ?? '').toContain('未启用')
   })
 
   it('localizes the credentials-partial notice from the host', async () => {
     const partial = { ...STATUS, username: 'half', password: '', authEnabled: false }
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       update: () => Promise.resolve({
         ok: true,
         value: { status: partial, notice: 'credentials-partial-restarted', message: '已保存并重启转发服务（注意：需同时设置用户名和密码才会启用密码登录）' },
       }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     submitForm(mounted.container)
     await flush()
@@ -306,13 +303,13 @@ describe('update form', () => {
 
   it('reports a saved-but-failed rebind with the host reason', async () => {
     const stopped = { ...STATUS, proxyListening: false }
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       update: () => Promise.resolve({
         ok: true,
         value: { status: stopped, notice: 'saved-restart-failed', message: '无法监听 0.0.0.0:3081：EADDRINUSE。该端口可能已被占用。' },
       }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     submitForm(mounted.container)
     await flush()
@@ -324,10 +321,10 @@ describe('update form', () => {
 
   it('reports a plain save (no restart) when the proxy is stopped', async () => {
     const stopped = { ...STATUS, proxyListening: false }
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       update: () => Promise.resolve({ ok: true, value: { status: stopped, notice: 'saved', message: '已保存' } }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
     submitForm(mounted.container)
     await flush()
@@ -338,8 +335,8 @@ describe('update form', () => {
   })
 
   it('rejects an invalid port locally without calling the host', async () => {
-    const { rpc, calls } = makeRpc()
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    const { call, calls } = makeCall()
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
 
     const inputs = mounted.container.querySelectorAll('input')
@@ -349,12 +346,12 @@ describe('update form', () => {
     await flush()
 
     expect(mounted.container.textContent ?? '').toContain('端口必须是 1–65535 的整数')
-    expect(calls.some((call) => call.endpoint === RPC_UPDATE_ENDPOINT)).toBe(false)
+    expect(calls.some((call) => call.endpoint === ENDPOINT_UPDATE)).toBe(false)
   })
 
   it('toggles password visibility with the eye button (value stays pre-filled)', async () => {
-    const { rpc } = makeRpc()
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    const { call } = makeCall()
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
 
     const inputs = mounted.container.querySelectorAll('input')
@@ -374,10 +371,10 @@ describe('update form', () => {
   })
 
   it('surfaces a host-side rejection message', async () => {
-    const { rpc } = makeRpc({
+    const { call } = makeCall({
       update: () => Promise.resolve({ ok: false, error: { code: 'bad-request', message: '代理服务端口不能与默认服务端口相同（都是 3080）', details: { issues: [] } } }),
     })
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
 
     // 3081 → local conflict (equals the default service port 3080? no, it
@@ -393,8 +390,8 @@ describe('update form', () => {
   })
 
   it('rejects the default-service-port conflict locally', async () => {
-    const { rpc, calls } = makeRpc()
-    mounted = mount(<SettingsSection {...props(rpc)} />)
+    const { call, calls } = makeCall()
+    mounted = mount(<SettingsSection {...props(call)} />)
     await flush()
 
     const inputs = mounted.container.querySelectorAll('input')
@@ -404,6 +401,6 @@ describe('update form', () => {
     await flush()
 
     expect(mounted.container.textContent ?? '').toContain('不能与默认服务端口相同')
-    expect(calls.some((call) => call.endpoint === RPC_UPDATE_ENDPOINT)).toBe(false)
+    expect(calls.some((call) => call.endpoint === ENDPOINT_UPDATE)).toBe(false)
   })
 })

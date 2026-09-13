@@ -223,9 +223,9 @@ var require_requires_port = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/common.js
+// node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/common.js
 var require_common = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/common.js"(exports2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/common.js"(exports2) {
     var common = exports2;
     var url = require("url");
     var extend2 = require("util")._extend;
@@ -333,9 +333,9 @@ var require_common = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js
+// node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js
 var require_web_outgoing = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js"(exports2, module2) {
     var url = require("url");
     var common = require_common();
     var redirectRegex = /^201|30(1|2|7|8)$/;
@@ -454,14 +454,438 @@ var require_web_outgoing = __commonJS({
   }
 });
 
-// node_modules/.pnpm/follow-redirects@1.16.0/node_modules/follow-redirects/debug.js
+// node_modules/.pnpm/ms@2.0.0/node_modules/ms/index.js
+var require_ms = __commonJS({
+  "node_modules/.pnpm/ms@2.0.0/node_modules/ms/index.js"(exports2, module2) {
+    var s = 1e3;
+    var m = s * 60;
+    var h = m * 60;
+    var d = h * 24;
+    var y = d * 365.25;
+    module2.exports = function(val, options) {
+      options = options || {};
+      var type = typeof val;
+      if (type === "string" && val.length > 0) {
+        return parse(val);
+      } else if (type === "number" && isNaN(val) === false) {
+        return options.long ? fmtLong(val) : fmtShort(val);
+      }
+      throw new Error(
+        "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
+      );
+    };
+    function parse(str) {
+      str = String(str);
+      if (str.length > 100) {
+        return;
+      }
+      var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(
+        str
+      );
+      if (!match) {
+        return;
+      }
+      var n = parseFloat(match[1]);
+      var type = (match[2] || "ms").toLowerCase();
+      switch (type) {
+        case "years":
+        case "year":
+        case "yrs":
+        case "yr":
+        case "y":
+          return n * y;
+        case "days":
+        case "day":
+        case "d":
+          return n * d;
+        case "hours":
+        case "hour":
+        case "hrs":
+        case "hr":
+        case "h":
+          return n * h;
+        case "minutes":
+        case "minute":
+        case "mins":
+        case "min":
+        case "m":
+          return n * m;
+        case "seconds":
+        case "second":
+        case "secs":
+        case "sec":
+        case "s":
+          return n * s;
+        case "milliseconds":
+        case "millisecond":
+        case "msecs":
+        case "msec":
+        case "ms":
+          return n;
+        default:
+          return void 0;
+      }
+    }
+    function fmtShort(ms) {
+      if (ms >= d) {
+        return Math.round(ms / d) + "d";
+      }
+      if (ms >= h) {
+        return Math.round(ms / h) + "h";
+      }
+      if (ms >= m) {
+        return Math.round(ms / m) + "m";
+      }
+      if (ms >= s) {
+        return Math.round(ms / s) + "s";
+      }
+      return ms + "ms";
+    }
+    function fmtLong(ms) {
+      return plural(ms, d, "day") || plural(ms, h, "hour") || plural(ms, m, "minute") || plural(ms, s, "second") || ms + " ms";
+    }
+    function plural(ms, n, name2) {
+      if (ms < n) {
+        return;
+      }
+      if (ms < n * 1.5) {
+        return Math.floor(ms / n) + " " + name2;
+      }
+      return Math.ceil(ms / n) + " " + name2 + "s";
+    }
+  }
+});
+
+// node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/debug.js
 var require_debug = __commonJS({
-  "node_modules/.pnpm/follow-redirects@1.16.0/node_modules/follow-redirects/debug.js"(exports2, module2) {
+  "node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/debug.js"(exports2, module2) {
+    exports2 = module2.exports = createDebug.debug = createDebug["default"] = createDebug;
+    exports2.coerce = coerce;
+    exports2.disable = disable;
+    exports2.enable = enable;
+    exports2.enabled = enabled;
+    exports2.humanize = require_ms();
+    exports2.names = [];
+    exports2.skips = [];
+    exports2.formatters = {};
+    var prevTime;
+    function selectColor(namespace) {
+      var hash = 0, i;
+      for (i in namespace) {
+        hash = (hash << 5) - hash + namespace.charCodeAt(i);
+        hash |= 0;
+      }
+      return exports2.colors[Math.abs(hash) % exports2.colors.length];
+    }
+    function createDebug(namespace) {
+      function debug() {
+        if (!debug.enabled) return;
+        var self = debug;
+        var curr = +/* @__PURE__ */ new Date();
+        var ms = curr - (prevTime || curr);
+        self.diff = ms;
+        self.prev = prevTime;
+        self.curr = curr;
+        prevTime = curr;
+        var args = new Array(arguments.length);
+        for (var i = 0; i < args.length; i++) {
+          args[i] = arguments[i];
+        }
+        args[0] = exports2.coerce(args[0]);
+        if ("string" !== typeof args[0]) {
+          args.unshift("%O");
+        }
+        var index = 0;
+        args[0] = args[0].replace(/%([a-zA-Z%])/g, function(match, format) {
+          if (match === "%%") return match;
+          index++;
+          var formatter = exports2.formatters[format];
+          if ("function" === typeof formatter) {
+            var val = args[index];
+            match = formatter.call(self, val);
+            args.splice(index, 1);
+            index--;
+          }
+          return match;
+        });
+        exports2.formatArgs.call(self, args);
+        var logFn = debug.log || exports2.log || console.log.bind(console);
+        logFn.apply(self, args);
+      }
+      debug.namespace = namespace;
+      debug.enabled = exports2.enabled(namespace);
+      debug.useColors = exports2.useColors();
+      debug.color = selectColor(namespace);
+      if ("function" === typeof exports2.init) {
+        exports2.init(debug);
+      }
+      return debug;
+    }
+    function enable(namespaces) {
+      exports2.save(namespaces);
+      exports2.names = [];
+      exports2.skips = [];
+      var split = (typeof namespaces === "string" ? namespaces : "").split(/[\s,]+/);
+      var len = split.length;
+      for (var i = 0; i < len; i++) {
+        if (!split[i]) continue;
+        namespaces = split[i].replace(/\*/g, ".*?");
+        if (namespaces[0] === "-") {
+          exports2.skips.push(new RegExp("^" + namespaces.substr(1) + "$"));
+        } else {
+          exports2.names.push(new RegExp("^" + namespaces + "$"));
+        }
+      }
+    }
+    function disable() {
+      exports2.enable("");
+    }
+    function enabled(name2) {
+      var i, len;
+      for (i = 0, len = exports2.skips.length; i < len; i++) {
+        if (exports2.skips[i].test(name2)) {
+          return false;
+        }
+      }
+      for (i = 0, len = exports2.names.length; i < len; i++) {
+        if (exports2.names[i].test(name2)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    function coerce(val) {
+      if (val instanceof Error) return val.stack || val.message;
+      return val;
+    }
+  }
+});
+
+// node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/browser.js
+var require_browser = __commonJS({
+  "node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/browser.js"(exports2, module2) {
+    exports2 = module2.exports = require_debug();
+    exports2.log = log;
+    exports2.formatArgs = formatArgs;
+    exports2.save = save;
+    exports2.load = load;
+    exports2.useColors = useColors;
+    exports2.storage = "undefined" != typeof chrome && "undefined" != typeof chrome.storage ? chrome.storage.local : localstorage();
+    exports2.colors = [
+      "lightseagreen",
+      "forestgreen",
+      "goldenrod",
+      "dodgerblue",
+      "darkorchid",
+      "crimson"
+    ];
+    function useColors() {
+      if (typeof window !== "undefined" && window.process && window.process.type === "renderer") {
+        return true;
+      }
+      return typeof document !== "undefined" && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance || // is firebug? http://stackoverflow.com/a/398120/376773
+      typeof window !== "undefined" && window.console && (window.console.firebug || window.console.exception && window.console.table) || // is firefox >= v31?
+      // https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
+      typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31 || // double check webkit in userAgent just in case we are in a worker
+      typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/);
+    }
+    exports2.formatters.j = function(v) {
+      try {
+        return JSON.stringify(v);
+      } catch (err) {
+        return "[UnexpectedJSONParseError]: " + err.message;
+      }
+    };
+    function formatArgs(args) {
+      var useColors2 = this.useColors;
+      args[0] = (useColors2 ? "%c" : "") + this.namespace + (useColors2 ? " %c" : " ") + args[0] + (useColors2 ? "%c " : " ") + "+" + exports2.humanize(this.diff);
+      if (!useColors2) return;
+      var c = "color: " + this.color;
+      args.splice(1, 0, c, "color: inherit");
+      var index = 0;
+      var lastC = 0;
+      args[0].replace(/%[a-zA-Z%]/g, function(match) {
+        if ("%%" === match) return;
+        index++;
+        if ("%c" === match) {
+          lastC = index;
+        }
+      });
+      args.splice(lastC, 0, c);
+    }
+    function log() {
+      return "object" === typeof console && console.log && Function.prototype.apply.call(console.log, console, arguments);
+    }
+    function save(namespaces) {
+      try {
+        if (null == namespaces) {
+          exports2.storage.removeItem("debug");
+        } else {
+          exports2.storage.debug = namespaces;
+        }
+      } catch (e) {
+      }
+    }
+    function load() {
+      var r;
+      try {
+        r = exports2.storage.debug;
+      } catch (e) {
+      }
+      if (!r && typeof process !== "undefined" && "env" in process) {
+        r = process.env.DEBUG;
+      }
+      return r;
+    }
+    exports2.enable(load());
+    function localstorage() {
+      try {
+        return window.localStorage;
+      } catch (e) {
+      }
+    }
+  }
+});
+
+// node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/node.js
+var require_node = __commonJS({
+  "node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/node.js"(exports2, module2) {
+    var tty = require("tty");
+    var util = require("util");
+    exports2 = module2.exports = require_debug();
+    exports2.init = init;
+    exports2.log = log;
+    exports2.formatArgs = formatArgs;
+    exports2.save = save;
+    exports2.load = load;
+    exports2.useColors = useColors;
+    exports2.colors = [6, 2, 3, 4, 5, 1];
+    exports2.inspectOpts = Object.keys(process.env).filter(function(key) {
+      return /^debug_/i.test(key);
+    }).reduce(function(obj, key) {
+      var prop = key.substring(6).toLowerCase().replace(/_([a-z])/g, function(_, k) {
+        return k.toUpperCase();
+      });
+      var val = process.env[key];
+      if (/^(yes|on|true|enabled)$/i.test(val)) val = true;
+      else if (/^(no|off|false|disabled)$/i.test(val)) val = false;
+      else if (val === "null") val = null;
+      else val = Number(val);
+      obj[prop] = val;
+      return obj;
+    }, {});
+    var fd = parseInt(process.env.DEBUG_FD, 10) || 2;
+    if (1 !== fd && 2 !== fd) {
+      util.deprecate(function() {
+      }, "except for stderr(2) and stdout(1), any other usage of DEBUG_FD is deprecated. Override debug.log if you want to use a different log function (https://git.io/debug_fd)")();
+    }
+    var stream = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
+    function useColors() {
+      return "colors" in exports2.inspectOpts ? Boolean(exports2.inspectOpts.colors) : tty.isatty(fd);
+    }
+    exports2.formatters.o = function(v) {
+      this.inspectOpts.colors = this.useColors;
+      return util.inspect(v, this.inspectOpts).split("\n").map(function(str) {
+        return str.trim();
+      }).join(" ");
+    };
+    exports2.formatters.O = function(v) {
+      this.inspectOpts.colors = this.useColors;
+      return util.inspect(v, this.inspectOpts);
+    };
+    function formatArgs(args) {
+      var name2 = this.namespace;
+      var useColors2 = this.useColors;
+      if (useColors2) {
+        var c = this.color;
+        var prefix = "  \x1B[3" + c + ";1m" + name2 + " \x1B[0m";
+        args[0] = prefix + args[0].split("\n").join("\n" + prefix);
+        args.push("\x1B[3" + c + "m+" + exports2.humanize(this.diff) + "\x1B[0m");
+      } else {
+        args[0] = (/* @__PURE__ */ new Date()).toUTCString() + " " + name2 + " " + args[0];
+      }
+    }
+    function log() {
+      return stream.write(util.format.apply(util, arguments) + "\n");
+    }
+    function save(namespaces) {
+      if (null == namespaces) {
+        delete process.env.DEBUG;
+      } else {
+        process.env.DEBUG = namespaces;
+      }
+    }
+    function load() {
+      return process.env.DEBUG;
+    }
+    function createWritableStdioStream(fd2) {
+      var stream2;
+      var tty_wrap = process.binding("tty_wrap");
+      switch (tty_wrap.guessHandleType(fd2)) {
+        case "TTY":
+          stream2 = new tty.WriteStream(fd2);
+          stream2._type = "tty";
+          if (stream2._handle && stream2._handle.unref) {
+            stream2._handle.unref();
+          }
+          break;
+        case "FILE":
+          var fs = require("fs");
+          stream2 = new fs.SyncWriteStream(fd2, { autoClose: false });
+          stream2._type = "fs";
+          break;
+        case "PIPE":
+        case "TCP":
+          var net = require("net");
+          stream2 = new net.Socket({
+            fd: fd2,
+            readable: false,
+            writable: true
+          });
+          stream2.readable = false;
+          stream2.read = null;
+          stream2._type = "pipe";
+          if (stream2._handle && stream2._handle.unref) {
+            stream2._handle.unref();
+          }
+          break;
+        default:
+          throw new Error("Implement me. Unknown stream file type!");
+      }
+      stream2.fd = fd2;
+      stream2._isStdio = true;
+      return stream2;
+    }
+    function init(debug) {
+      debug.inspectOpts = {};
+      var keys = Object.keys(exports2.inspectOpts);
+      for (var i = 0; i < keys.length; i++) {
+        debug.inspectOpts[keys[i]] = exports2.inspectOpts[keys[i]];
+      }
+    }
+    exports2.enable(load());
+  }
+});
+
+// node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/index.js
+var require_src = __commonJS({
+  "node_modules/.pnpm/debug@2.6.9/node_modules/debug/src/index.js"(exports2, module2) {
+    if (typeof process !== "undefined" && process.type === "renderer") {
+      module2.exports = require_browser();
+    } else {
+      module2.exports = require_node();
+    }
+  }
+});
+
+// node_modules/.pnpm/follow-redirects@1.16.0_debug@2.6.9/node_modules/follow-redirects/debug.js
+var require_debug2 = __commonJS({
+  "node_modules/.pnpm/follow-redirects@1.16.0_debug@2.6.9/node_modules/follow-redirects/debug.js"(exports2, module2) {
     var debug;
     module2.exports = function() {
       if (!debug) {
         try {
-          debug = require("debug")("follow-redirects");
+          debug = require_src()("follow-redirects");
         } catch (error) {
         }
         if (typeof debug !== "function") {
@@ -474,16 +898,16 @@ var require_debug = __commonJS({
   }
 });
 
-// node_modules/.pnpm/follow-redirects@1.16.0/node_modules/follow-redirects/index.js
+// node_modules/.pnpm/follow-redirects@1.16.0_debug@2.6.9/node_modules/follow-redirects/index.js
 var require_follow_redirects = __commonJS({
-  "node_modules/.pnpm/follow-redirects@1.16.0/node_modules/follow-redirects/index.js"(exports2, module2) {
+  "node_modules/.pnpm/follow-redirects@1.16.0_debug@2.6.9/node_modules/follow-redirects/index.js"(exports2, module2) {
     var url = require("url");
     var URL2 = url.URL;
     var http2 = require("http");
     var https = require("https");
     var Writable = require("stream").Writable;
     var assert = require("assert");
-    var debug = require_debug();
+    var debug = require_debug2();
     (function detectUnsupportedEnvironment() {
       var looksLikeNode = typeof process !== "undefined";
       var looksLikeBrowser = typeof window !== "undefined" && typeof document !== "undefined";
@@ -985,9 +1409,9 @@ var require_follow_redirects = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js
+// node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js
 var require_web_incoming = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js"(exports2, module2) {
     var httpNative = require("http");
     var httpsNative = require("https");
     var web_o = require_web_outgoing();
@@ -1135,9 +1559,9 @@ var require_web_incoming = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js
+// node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js
 var require_ws_incoming = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js"(exports2, module2) {
     var http2 = require("http");
     var https = require("https");
     var common = require_common();
@@ -1249,9 +1673,9 @@ var require_ws_incoming = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/index.js
+// node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/index.js
 var require_http_proxy = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/index.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy/index.js"(exports2, module2) {
     var httpProxy2 = module2.exports;
     var extend2 = require("util")._extend;
     var parse_url = require("url").parse;
@@ -1366,9 +1790,9 @@ var require_http_proxy = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy.js
+// node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy.js
 var require_http_proxy2 = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/lib/http-proxy.js"(exports2, module2) {
     var ProxyServer = require_http_proxy().Server;
     function createProxyServer(options) {
       return new ProxyServer(options);
@@ -1380,9 +1804,9 @@ var require_http_proxy2 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/index.js
+// node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/index.js
 var require_http_proxy3 = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/index.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_debug@2.6.9/node_modules/http-proxy/index.js"(exports2, module2) {
     module2.exports = require_http_proxy2();
   }
 });
@@ -1392,15 +1816,15 @@ var index_exports = {};
 __export(index_exports, {
   Config: () => Config,
   apply: () => apply,
+  createLanProxyRoute: () => createLanProxyRoute,
   inject: () => inject,
   lanAddresses: () => lanAddresses,
   name: () => name,
-  registerRpcChannel: () => registerRpcChannel,
   startLanProxy: () => startLanProxy
 });
 module.exports = __toCommonJS(index_exports);
 
-// node_modules/.pnpm/@deepseek-ai+cosmokit@1.8.2/node_modules/@deepseek-ai/cosmokit/lib/index.js
+// node_modules/.pnpm/@deepseek-ai+cosmokit@1.8.3/node_modules/@deepseek-ai/cosmokit/lib/index.js
 function isNullable(value) {
   return value === null || value === void 0;
 }
@@ -1586,7 +2010,7 @@ var Time;
   Time2.template = template;
 })(Time || (Time = {}));
 
-// node_modules/.pnpm/@deepseek-ai+schemastery@3.18.1/node_modules/@deepseek-ai/schemastery/lib/index.mjs
+// node_modules/.pnpm/@deepseek-ai+schemastery@3.18.2/node_modules/@deepseek-ai/schemastery/lib/index.mjs
 var kSchema = /* @__PURE__ */ Symbol.for("schemastery");
 var kValidationError = /* @__PURE__ */ Symbol.for("ValidationError");
 globalThis.__schemastery_index__ ??= 0;
@@ -2188,7 +2612,7 @@ defineMethod("transform", [
   "preserve"
 ], ({ inner }, isInner) => inner.toString(isInner));
 
-// node_modules/.pnpm/@deepseek-ai+dsh-home-paths@0.1.0-rc.6_@deepseek-ai+cordis@4.0.1/node_modules/@deepseek-ai/dsh-home-paths/lib/index.js
+// node_modules/.pnpm/@deepseek-ai+dsh-home-paths@0.1.5-rc.2_@deepseek-ai+cordis@4.0.2/node_modules/@deepseek-ai/dsh-home-paths/lib/index.js
 var import_node_os = require("node:os");
 var import_node_path = require("node:path");
 var DSH_HOME_DIR_NAME = ".dsh";
@@ -2811,11 +3235,11 @@ var ProxyController = class {
 };
 
 // src/contract.ts
-var RPC_CHANNEL = "/dsh-proxy";
-var RPC_STATUS_ENDPOINT = "status";
-var RPC_UPDATE_ENDPOINT = "update";
-var RPC_START_ENDPOINT = "start";
-var RPC_STOP_ENDPOINT = "stop";
+var LAN_PROXY_PATH = "/api/dsh-proxy";
+var ENDPOINT_STATUS = "status";
+var ENDPOINT_UPDATE = "update";
+var ENDPOINT_START = "start";
+var ENDPOINT_STOP = "stop";
 
 // src/index.ts
 var name = "@smanx/dsh-proxy";
@@ -2828,18 +3252,45 @@ var Config = Schema.object({
   username: Schema.string().default(""),
   password: Schema.string().default("")
 });
-var RPC_CHANNEL_OPTIONS = { authority: "loopback" };
-function registerRpcChannel(ctx, channel, handler) {
-  try {
-    const dispose = ctx.connection.rpc.handle(channel, handler, RPC_CHANNEL_OPTIONS);
-    return () => void dispose();
-  } catch (error) {
-    const service = ctx.connection;
-    if (typeof service.register !== "function" || !String(error.message).includes("webServer")) {
-      throw error;
+function failure(message) {
+  const error = { code: "bad-request", message, details: { issues: [] } };
+  return { ok: false, error };
+}
+function createLanProxyRoute(controller) {
+  const dispatch = async (endpoint, payload) => {
+    if (endpoint === ENDPOINT_STATUS) {
+      return { ok: true, value: await controller.refreshStatus() };
     }
-    return service.register(ctx, channel, handler, RPC_CHANNEL_OPTIONS);
-  }
+    if (endpoint === ENDPOINT_START) {
+      const outcome = await controller.start();
+      if (!outcome.ok) {
+        return failure(outcome.message);
+      }
+      return { ok: true, value: await controller.refreshStatus() };
+    }
+    if (endpoint === ENDPOINT_STOP) {
+      return { ok: true, value: controller.stopDeferred() };
+    }
+    if (endpoint === ENDPOINT_UPDATE) {
+      const outcome = await controller.update(payload);
+      if (outcome.ok) return { ok: true, value: outcome.result };
+      return failure(outcome.message);
+    }
+    return failure(`unknown endpoint ${JSON.stringify(endpoint)}`);
+  };
+  return async (request) => {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json(failure("body is not JSON"), { status: 400 });
+    }
+    if (typeof body?.endpoint !== "string" || body.endpoint.length === 0) {
+      return Response.json(failure("body has no endpoint"), { status: 400 });
+    }
+    const result = await dispatch(body.endpoint, body.payload);
+    return Response.json(result);
+  };
 }
 function apply(ctx, config) {
   const resolved = Config(config ?? {});
@@ -2866,58 +3317,23 @@ function apply(ctx, config) {
     "dsh-proxy.proxy"
   );
   ctx.effect(
-    () => {
-      const dispose = registerRpcChannel(
-        ctx,
-        RPC_CHANNEL,
-        async (endpoint, payload) => {
-          if (endpoint === RPC_STATUS_ENDPOINT) {
-            return { ok: true, value: await controller.refreshStatus() };
-          }
-          if (endpoint === RPC_START_ENDPOINT) {
-            const outcome = await controller.start();
-            if (!outcome.ok) {
-              return {
-                ok: false,
-                error: { code: "bad-request", message: outcome.message, details: { issues: [] } }
-              };
-            }
-            return { ok: true, value: await controller.refreshStatus() };
-          }
-          if (endpoint === RPC_STOP_ENDPOINT) {
-            return { ok: true, value: controller.stopDeferred() };
-          }
-          if (endpoint === RPC_UPDATE_ENDPOINT) {
-            const outcome = await controller.update(payload);
-            if (outcome.ok) return { ok: true, value: outcome.result };
-            return {
-              ok: false,
-              error: { code: "bad-request", message: outcome.message, details: { issues: [] } }
-            };
-          }
-          return {
-            ok: false,
-            error: {
-              code: "bad-request",
-              message: `unknown endpoint ${JSON.stringify(endpoint)}`,
-              details: { issues: [] }
-            }
-          };
-        }
-      );
-      return dispose;
-    },
-    "dsh-proxy.rpc"
+    () => ctx.connection.fetch.register({
+      path: LAN_PROXY_PATH,
+      methods: ["POST"],
+      requestBody: "buffered",
+      fetch: createLanProxyRoute(controller)
+    }),
+    "dsh-proxy.settings-route"
   );
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   Config,
   apply,
+  createLanProxyRoute,
   inject,
   lanAddresses,
   name,
-  registerRpcChannel,
   startLanProxy
 });
 /*! Bundled license information:
