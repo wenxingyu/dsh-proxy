@@ -17,7 +17,7 @@
   disabled: true
 - insert:
     - id: dsh-proxy
-      name: "@smanx/dsh-proxy"
+      name: "@wenxingyu/dsh-proxy"
     - id: dsh-proxy-directory-picker-browse
       name: "@deepseek-ai/dsh-host-directory-picker-browse"
     - id: dsh-proxy-directory-picker-browse-client

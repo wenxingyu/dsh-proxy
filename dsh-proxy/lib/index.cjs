@@ -3280,7 +3280,7 @@ var ENDPOINT_START = "start";
 var ENDPOINT_STOP = "stop";
 
 // src/index.ts
-var name = "@smanx/dsh-proxy";
+var name = "@wenxingyu/dsh-proxy";
 var inject = ["webServer", "connection"];
 var Config = Schema.object({
   listenHost: Schema.string().default("0.0.0.0"),
