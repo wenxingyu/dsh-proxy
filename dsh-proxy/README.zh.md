@@ -11,14 +11,14 @@ DSH 插件：把 DeepSeek Harness Web 界面（默认 `127.0.0.1:3080`）转发�
 
 > 为什么需要它：DSH Web 服务端**故意拒绝** `--host 0.0.0.0`（避免把 RCE 直接暴露到网络），本插件是官方认可的"出网"方式——独立监听端口 + 认证 + 反代回 loopback。
 >
-> 独立版（Go/Node 单文件，不依赖 DSH）见 <https://github.com/smanx/dsh-proxy>；本插件是它的集成版，认证方式与独立版一致（原生 Basic Auth）。
+> 独立版（Go/Node 单文件，不依赖 DSH）见 <https://github.com/wenxingyu/dsh-proxy>；本插件是它的集成版，认证方式与独立版一致（原生 Basic Auth）。
 
 ## 安装
 
 **在线安装（推荐）**——直接从 GitHub 安装（无需下载仓库）：
 
 ```bash
-dsh plugin --profile web add github:smanx/dsh-proxy#master
+dsh plugin --profile web add github:wenxingyu/dsh-proxy#master
 ```
 
 **本地安装**（仓库已克隆/下载到本机）：
@@ -27,7 +27,7 @@ dsh plugin --profile web add github:smanx/dsh-proxy#master
 dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 ```
 
-安装后包名为 **`@smanx/dsh-proxy`**（scoped，带用户名前缀），`dsh plugin ls` 中显示为 `@smanx/dsh-proxy@0.1.1`。
+安装后包名为 **`@wenxingyu/dsh-proxy`**（scoped，带用户名前缀），`dsh plugin ls` 中显示为 `@wenxingyu/dsh-proxy@0.1.1`。
 
 安装后**重启 `dsh web`**（Ctrl+C 后重新运行）即生效。若 3081 被占用（例如独立版 dsh-proxy 还在运行），先停掉它，或在配置里换一个端口。
 

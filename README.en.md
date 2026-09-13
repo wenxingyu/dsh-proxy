@@ -22,7 +22,7 @@ Supports Basic Auth, LAN access, and `crypto.randomUUID` polyfill injection.
 **Online install (recommended)** — directly from GitHub, no need to download the repository:
 
 ```bash
-dsh plugin --profile web add github:smanx/dsh-proxy#master
+dsh plugin --profile web add github:wenxingyu/dsh-proxy#master
 ```
 
 **Local install** (repository cloned/downloaded on this machine):
@@ -38,7 +38,7 @@ Details: [`dsh-proxy/README.md`](dsh-proxy/README.md).
 
 Alternative when you do not use DSH or need a separate process: two equivalent single-file builds (interactive start, config memory, non-interactive CLI flags).
 
-**Download install**: grab the single executable for your platform from [GitHub Releases](https://github.com/smanx/dsh-proxy/releases) (Go ~6-7 MB / Node ~80-120 MB), put it anywhere and run it; on macOS/Linux `chmod +x` first.
+**Download install**: grab the single executable for your platform from [GitHub Releases](https://github.com/wenxingyu/dsh-proxy/releases) (Go ~6-7 MB / Node ~80-120 MB), put it anywhere and run it; on macOS/Linux `chmod +x` first.
 
 | Directory | Language | Single-file size | Notes |
 |---|---|---|---|

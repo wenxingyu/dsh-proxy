@@ -11,14 +11,14 @@ A DeepSeek Harness plugin that exposes the local DSH web app (default `127.0.0.1
 
 > Why: the DSH web server deliberately refuses `--host 0.0.0.0` (it would expose remote code execution to the network). This plugin is the sanctioned way out: a separate authenticated listener that proxies back to loopback.
 >
-> The standalone (Go/Node single-file, no DSH required) lives at <https://github.com/smanx/dsh-proxy>; this is its integrated sibling with the same native-Basic-Auth model.
+> The standalone (Go/Node single-file, no DSH required) lives at <https://github.com/wenxingyu/dsh-proxy>; this is its integrated sibling with the same native-Basic-Auth model.
 
 ## Install
 
 **Online install (recommended)** — directly from GitHub, no need to download the repository:
 
 ```bash
-dsh plugin --profile web add github:smanx/dsh-proxy#master
+dsh plugin --profile web add github:wenxingyu/dsh-proxy#master
 ```
 
 **Local install** (repository cloned/downloaded on this machine):
@@ -27,7 +27,7 @@ dsh plugin --profile web add github:smanx/dsh-proxy#master
 dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 ```
 
-The installed package is **`@smanx/dsh-proxy`** (scoped, with the username prefix) and shows up as `@smanx/dsh-proxy@0.1.1` in `dsh plugin ls`.
+The installed package is **`@wenxingyu/dsh-proxy`** (scoped, with the username prefix) and shows up as `@wenxingyu/dsh-proxy@0.1.1` in `dsh plugin ls`.
 
 Then **restart `dsh web`**. If port 3081 is taken (e.g. the standalone dsh-proxy is still running), stop it first or change `listenPort` below.
 
