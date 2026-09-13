@@ -67,6 +67,8 @@ dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 2. 浏览器访问 `http://<本机局域网IP>:3081` → **浏览器弹出原生 Basic Auth 登录框** → 输入用户名密码 → 进入 DSH 界面。
 3. 局域网内其他设备用同一地址访问；登录成功后浏览器会记住凭据，下次直接进入。
 
+> DSH 自身的浏览器会话：Web 界面还要求一个随进程启动令牌签发的会话 cookie，而 `dsh web` 打印的 `?token=...` 地址是 loopback 的，局域网设备用不了。插件会用**你实际访问的地址**自动补上这一步（首次 `GET /` 未带会话时 302 到 `http://<你的地址>:<端口>/?token=...`，换成 cookie 后再跳回干净的 `/`），所以局域网首次访问**不需要手动复制令牌**；直接打开上面的地址即可。
+
 > Windows 防火墙：若局域网设备连不上，为本机放行该端口（管理员 PowerShell）：
 > `netsh advfirewall firewall add rule name="dsh-proxy" dir=in action=allow protocol=TCP localport=3081`
 

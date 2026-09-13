@@ -66,6 +66,8 @@ Settings-page changes persist and take precedence over the profile's `cordis.pat
    ```
 2. Browse to `http://<your-LAN-IP>:3081` → the browser shows its **native Basic Auth dialog** → enter the credentials → the DSH UI loads. The browser remembers the credentials, so subsequent visits open directly.
 
+> DSH's own browser session: the Web UI also requires a session cookie minted from the per-process launch token, and the `?token=...` URL `dsh web` prints points at loopback — useless for a LAN device. The plugin completes that exchange for the address you actually used (an unauthenticated `GET /` is answered with a 302 to `http://<your-address>:<port>/?token=...`, which sets the cookie and bounces back to a clean `/`), so a first LAN visit needs no manual token copying. Just open the URL above.
+
 > Windows Firewall: if LAN devices cannot connect, allow the port (admin PowerShell):
 > `netsh advfirewall firewall add rule name="dsh-proxy" dir=in action=allow protocol=TCP localport=3081`
 
