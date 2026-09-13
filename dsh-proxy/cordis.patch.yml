@@ -3,6 +3,22 @@
 # in src/index.ts; override them from the profile's own cordis.patch.yml by
 # targeting this row's id (the patch replaces the whole config, so restate
 # every key you own).
+
+# Pin the in-app (browse) directory chooser in place of the adaptive one.
+# `dsh-host-directory-picker-auto` mounts the native backend only while the web
+# app is loopback-bound — it reads that as "the only browser can see the host
+# display". This plugin exists precisely to serve browsers that cannot, and
+# `dsh web` keeps binding 127.0.0.1 (the plugin adds a separate listener), so
+# without this pin "add workspace" pops an OS dialog on the HOST screen that a
+# LAN visitor never sees. The browse pair is what DSH's own resolver falls back
+# to whenever the situation is ambiguous, so a local browser keeps working.
+# Delete these entries to get the adaptive chooser back.
+- id: directory-picker
+  disabled: true
 - insert:
     - id: dsh-proxy
       name: "@smanx/dsh-proxy"
+    - id: dsh-proxy-directory-picker-browse
+      name: "@deepseek-ai/dsh-host-directory-picker-browse"
+    - id: dsh-proxy-directory-picker-browse-client
+      name: "@deepseek-ai/dsh-client-ui-directory-picker-browse"
