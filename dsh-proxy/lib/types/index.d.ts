@@ -13,6 +13,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import type { ConnectionRpcHandler } from '@deepseek-ai/dsh-client-connection';
 export { lanAddresses, startLanProxy } from './proxy.ts';
 export type { LanProxyHandle, LanProxyOptions } from './proxy.ts';
 /** Stable Cordis plugin name (the Loader entry and package name). */
@@ -50,6 +51,26 @@ export declare const Config: z<Schemastery.ObjectS<{
     username: z<string, string>;
     password: z<string, string>;
 }>>;
+/**
+ * Register one channel on the host Connection RPC registry, owned by this
+ * plugin's fiber (so unloading the plugin removes the route).
+ *
+ * `ctx.connection.rpc.handle` is the documented shorthand, but harness
+ * 0.1.5-rc.x resolves the `webServer` service needed to mount the route from
+ * the *Connection service's own fiber* (the shorthand registers through the
+ * service's context). That plugin now reaches `webServer` through a nested
+ * `ctx.inject` scope instead of declaring it in its top-level `inject`, so the
+ * shorthand throws `cannot get property "webServer" without inject` and the
+ * whole tree fails to load. Calling the registry's `register` with the caller
+ * as owner restores the intended contract: this plugin does inject `webServer`,
+ * and the channel stays owned by its fiber.
+ *
+ * @param ctx - host cordis context (channel owner and `webServer` consumer).
+ * @param channel - absolute channel prefix, e.g. `/dsh-proxy`.
+ * @param handler - decoded endpoint handler.
+ * @returns disposer removing the channel route.
+ */
+export declare function registerRpcChannel(ctx: Context, channel: string, handler: ConnectionRpcHandler): () => void;
 /**
  * Mount the proxy and the RPC channel as effects on this plugin's fiber:
  * unloading the plugin closes the listener, every upgraded socket, and the

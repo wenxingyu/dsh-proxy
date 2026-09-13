@@ -16,7 +16,7 @@ import z from '@deepseek-ai/schemastery'
 // Type-only: merges `ctx.webServer` into the Context type.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: merges `ctx.connection` (host Connection RPC registry).
-import type {} from '@deepseek-ai/dsh-client-connection'
+import type { ConnectionRpcHandler, ConnectionRpcHandlerOptions } from '@deepseek-ai/dsh-client-connection'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { ProxyController } from './controller.ts'
 import { RPC_CHANNEL, RPC_START_ENDPOINT, RPC_STATUS_ENDPOINT, RPC_STOP_ENDPOINT, RPC_UPDATE_ENDPOINT } from './contract.ts'
@@ -58,6 +58,50 @@ export const Config = z.object({
   password: z.string().default(''),
 })
 
+/** Trust policy of the settings channel: loopback only. */
+const RPC_CHANNEL_OPTIONS: ConnectionRpcHandlerOptions = { authority: 'loopback' }
+
+/**
+ * Register one channel on the host Connection RPC registry, owned by this
+ * plugin's fiber (so unloading the plugin removes the route).
+ *
+ * `ctx.connection.rpc.handle` is the documented shorthand, but harness
+ * 0.1.5-rc.x resolves the `webServer` service needed to mount the route from
+ * the *Connection service's own fiber* (the shorthand registers through the
+ * service's context). That plugin now reaches `webServer` through a nested
+ * `ctx.inject` scope instead of declaring it in its top-level `inject`, so the
+ * shorthand throws `cannot get property "webServer" without inject` and the
+ * whole tree fails to load. Calling the registry's `register` with the caller
+ * as owner restores the intended contract: this plugin does inject `webServer`,
+ * and the channel stays owned by its fiber.
+ *
+ * @param ctx - host cordis context (channel owner and `webServer` consumer).
+ * @param channel - absolute channel prefix, e.g. `/dsh-proxy`.
+ * @param handler - decoded endpoint handler.
+ * @returns disposer removing the channel route.
+ */
+export function registerRpcChannel(ctx: Context, channel: string, handler: ConnectionRpcHandler): () => void {
+  try {
+    const dispose = ctx.connection.rpc.handle(channel, handler, RPC_CHANNEL_OPTIONS)
+    return () => void dispose()
+  } catch (error) {
+    const service = ctx.connection as unknown as {
+      register?: (
+        owner: Context,
+        channel: string,
+        handler: ConnectionRpcHandler,
+        options: ConnectionRpcHandlerOptions,
+      ) => () => void
+    }
+    // Only the harness's `webServer` resolution failure is retried; a genuine
+    // registration conflict must keep its original error.
+    if (typeof service.register !== 'function' || !String((error as Error).message).includes('webServer')) {
+      throw error
+    }
+    return service.register(ctx, channel, handler, RPC_CHANNEL_OPTIONS)
+  }
+}
+
 /**
  * Mount the proxy and the RPC channel as effects on this plugin's fiber:
  * unloading the plugin closes the listener, every upgraded socket, and the
@@ -93,7 +137,8 @@ export function apply(ctx: Context, config?: Config): void {
 
   ctx.effect(
     () => {
-      const dispose = ctx.connection.rpc.handle(
+      const dispose = registerRpcChannel(
+        ctx,
         RPC_CHANNEL,
         async (endpoint, payload) => {
           if (endpoint === RPC_STATUS_ENDPOINT) {
@@ -134,12 +179,8 @@ export function apply(ctx: Context, config?: Config): void {
             },
           }
         },
-        // The channel is loopback-only: through the proxy (Host rewritten to
-        // loopback) and direct loopback both pass; nothing else may mutate
-        // the proxy's credentials.
-        { authority: 'loopback' },
       )
-      return () => void dispose()
+      return dispose
     },
     'dsh-proxy.rpc',
   )
