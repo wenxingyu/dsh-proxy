@@ -55,7 +55,7 @@ After restarting `dsh web`, open DSH settings (gear icon) → "LAN Proxy":
 - **Status**: two red/green running lights — the **proxy port** (listen address:port; green = the proxy is actually bound, red = bind failed e.g. port busy) and the **default service port** (DSH service port; green = the default service answers a probe, red = unreachable) — plus the current username and whether password login is enabled. A **Start/Stop** button pair sits in the card header: Start is grayed out while running, Stop is grayed out while stopped.
 - **Edit settings**: change the **proxy listen port**, **username**, and **password** (leave empty to set blank). "Apply" writes `$DSH_HOME/dsh-proxy.json` and **immediately restarts the forwarding service**; changing the listen port moves the LAN access address.
 
-Settings-page changes persist and take precedence over the profile's `cordis.patch.yml`; `listenHost` / `listenPort` remain cordis-only. The page talks to the host through the `/dsh-proxy` Connection RPC channel (`status` / `update` / `start` / `stop`), scoped to loopback authority (still reachable from the LAN via the proxy's Host rewrite).
+Settings-page changes persist and take precedence over the profile's `cordis.patch.yml`; `listenHost` / `listenPort` remain cordis-only. The page talks to the host through an exact `POST /api/dsh-proxy` route on Connection's shared `/api` channel (`status` / `update` / `start` / `stop` endpoints); Connection owns the request-trust fence and the browser session check (still reachable from the LAN via the proxy's Host rewrite).
 
 ## Usage
 
@@ -77,7 +77,7 @@ pnpm run check   # typecheck + test + build
 pnpm run smoke   # full live smoke test against a running DSH on 127.0.0.1:3080
 ```
 
-- `src/` — TypeScript source. `src/proxy.ts` is the pure-node proxy core (no cordis, independently testable); `src/controller.ts` is the proxy controller (start/stop/restart/status/update plus settings persistence); `src/index.ts` is the cordis plugin entry (including the `/dsh-proxy` RPC channel); `src/client/` is the browser settings section.
+- `src/` — TypeScript source. `src/proxy.ts` is the pure-node proxy core (no cordis, independently testable); `src/controller.ts` is the proxy controller (start/stop/restart/status/update plus settings persistence); `src/index.ts` is the cordis plugin entry (including the `/api/dsh-proxy` exact route), `src/client/transport.ts` is the browser-side caller; `src/client/` is the browser settings section.
 - `lib/` — committed build artifacts; `lib/index.cjs` is a fully self-contained host bundle (schemastery, http-proxy, dsh-home-paths inlined) and `lib/client.js` the browser bundle (react only external).
 - `tests/` — vitest: auth primitives, pure functions, proxy integration (HTTP + WebSocket), the controller against a real in-process upstream with a temp settings file, and a jsdom render of the settings section.
 
