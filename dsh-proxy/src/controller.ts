@@ -28,7 +28,7 @@ export interface ProxyControllerOptions {
   /**
    * Host hook building DSH's launch-token URL for a public origin, so a LAN
    * visitor's first index request can log itself in (see
-   * {@link LanProxyOptions.authenticatedUrl}). Absent in the standalone build.
+   * {@link LanProxyOptions.authenticatedUrl}). Absent when the host has none.
    */
   authenticatedUrl?: (publicOrigin: string) => string | undefined
   /** Log sink (the plugin passes ctx.logger-based printer). */
@@ -78,8 +78,8 @@ export class ProxyController {
   }
 
   /**
-   * Start the proxy (idempotent). Listen errors — the port is already taken,
-   * e.g. by the standalone dsh-proxy — are logged loudly and reported through
+   * Start the proxy (idempotent). Listen errors — the port is already taken by
+   * another dsh-proxy instance, say — are logged loudly and reported through
    * the outcome (never thrown), so a failed forwarder can never take down the
    * web app boot while callers still learn why the listener is down.
    */

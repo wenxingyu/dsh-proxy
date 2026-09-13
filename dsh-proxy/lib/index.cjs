@@ -3096,8 +3096,8 @@ var ProxyController = class {
     return current.listenPort !== void 0 || current.upstreamPort !== void 0 || current.username !== void 0 || current.password !== void 0;
   }
   /**
-   * Start the proxy (idempotent). Listen errors — the port is already taken,
-   * e.g. by the standalone dsh-proxy — are logged loudly and reported through
+   * Start the proxy (idempotent). Listen errors — the port is already taken by
+   * another dsh-proxy instance, say — are logged loudly and reported through
    * the outcome (never thrown), so a failed forwarder can never take down the
    * web app boot while callers still learn why the listener is down.
    */

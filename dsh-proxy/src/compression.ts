@@ -15,7 +15,6 @@
  * encoding is unsupported or decompression fails, pass the bytes through
  * untouched rather than corrupting the response.
  *
- * Mirrors the standalone proxy's compression handling.
  */
 import zlib from 'node:zlib'
 import type http from 'node:http'

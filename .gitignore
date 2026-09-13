@@ -1,15 +1,8 @@
-# Node 版
-node/node_modules/
-node/dist/
-node/.sea-cache/
-node/config.json
-node/proxy.log
-node/proxy.err
+# Dependencies and build output
+node_modules/
+dist/
 
-# Go 版
-go/dist/
-go/*.exe
-go/config.json
-
-# CI 临时目录
-release-assets/
+# Local scratch (test probes)
+.probe/
+.pnpm-store/
+.npm-cache/

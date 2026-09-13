@@ -1,8 +1,8 @@
 /**
  * The LAN reverse proxy core: an HTTP + WebSocket reverse proxy that forwards
  * to the local DSH service (127.0.0.1:<upstreamPort>) and gates every request
- * behind HTTP Basic Auth — the browser's NATIVE credential dialog, exactly
- * like the standalone dsh-proxy. No custom login page, no session cookies:
+ * behind HTTP Basic Auth — the browser's NATIVE credential dialog. No custom
+ * login page, no session cookies:
  * after a successful Basic login the browser caches the credentials for the
  * origin and sends them on every request (including WebSocket handshakes).
  * Pure node — no cordis; the plugin entry in index.ts wires it into the
@@ -61,7 +61,7 @@ export interface LanProxyOptions {
    * `dsh web` prints — a loopback address a LAN visitor cannot use. When this
    * hook is provided, an unauthenticated index request is redirected through
    * the token exchange for the caller's own origin, so the LAN URL logs itself
-   * in. Omit it (the standalone build has no host context) to pass the
+   * in. Omit it when the host offers no launch-token source to pass the
    * upstream 401 through unchanged.
    */
   authenticatedUrl?: (publicOrigin: string) => string | undefined
@@ -229,9 +229,9 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
   /**
    * Challenge with HTTP Basic Auth: the 401 plus WWW-Authenticate makes the
    * browser show its NATIVE credential dialog. No custom login page exists —
-   * this is the whole authentication surface, matching the standalone
-   * dsh-proxy. (Browsers cache the credentials per origin after a successful
-   * login and silently replay them, including on WebSocket handshakes.)
+   * this is the whole authentication surface. (Browsers cache the credentials
+   * per origin after a successful login and silently replay them, including on
+   * WebSocket handshakes.)
    */
   const challenge = (res: http.ServerResponse): void => {
     res.writeHead(401, {

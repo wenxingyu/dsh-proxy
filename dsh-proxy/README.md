@@ -3,7 +3,7 @@
 A DeepSeek Harness plugin that exposes the local DSH web app (default `127.0.0.1:3080`) on a **second, authenticated port** for LAN access.
 
 - **HTTP + WebSocket reverse proxy** — real-time streams keep working.
-- **Native Basic Auth (off by default)** — the same model as the standalone dsh-proxy: the **browser's own credential dialog**, no custom login page, no session cookies. Username and password default to empty (open LAN access); setting **both** in the settings page turns password login on, after which unauthenticated requests are answered with `401 + WWW-Authenticate: Basic` and the browser pops its native dialog. After a successful login the browser caches the credentials for the origin and sends them automatically (including on WebSocket handshakes).
+- **Native Basic Auth (off by default)** — the **browser's own credential dialog**, no custom login page, no session cookies. Username and password default to empty (open LAN access); setting **both** in the settings page turns password login on, after which unauthenticated requests are answered with `401 + WWW-Authenticate: Basic` and the browser pops its native dialog. After a successful login the browser caches the credentials for the origin and sends them automatically (including on WebSocket handshakes).
 - **Settings page** — DSH settings → "LAN Proxy": shows the running ports and whether password login is enabled, **starts/stops the proxy**, and edits the proxy listen port, username, and password; saving persists the patch to `$DSH_HOME/dsh-proxy.json` and immediately restarts the forwarding service.
 - **Out-of-the-box compatibility fixes** — `Host`/`Origin` rewriting (passes the DSH `/api` same-origin trust fence from the LAN) and a `crypto.randomUUID` polyfill injected into proxied HTML (non-secure LAN contexts lack it, which would break every RPC).
 - **In-browser directory picker** — DSH mounts the OS chooser whenever the web app is loopback-bound (`dsh-host-directory-picker-auto`'s rule), so "add workspace" opened a dialog on the HOST screen that a remote visitor cannot see. The plugin pins the in-app browse interaction instead, so the picker renders in the page on any device.
@@ -11,7 +11,6 @@ A DeepSeek Harness plugin that exposes the local DSH web app (default `127.0.0.1
 
 > Why: the DSH web server deliberately refuses `--host 0.0.0.0` (it would expose remote code execution to the network). This plugin is the sanctioned way out: a separate authenticated listener that proxies back to loopback.
 >
-> The standalone (Go/Node single-file, no DSH required) lives at <https://github.com/wenxingyu/dsh-proxy>; this is its integrated sibling with the same native-Basic-Auth model.
 
 ## Install
 
@@ -29,7 +28,7 @@ dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 
 The installed package is **`@wenxingyu/dsh-proxy`** (scoped, with the username prefix) and shows up as `@wenxingyu/dsh-proxy@0.1.1` in `dsh plugin ls`.
 
-Then **restart `dsh web`**. If port 3081 is taken (e.g. the standalone dsh-proxy is still running), stop it first or change `listenPort` below.
+Then **restart `dsh web`**. If port 3081 is taken (e.g. another dsh-proxy instance is still running), stop it first or change `listenPort` below.
 
 ## Configuration
 

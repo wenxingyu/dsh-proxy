@@ -1,6 +1,0 @@
-node_modules/
-dist/
-.sea-cache/
-config.json
-proxy.log
-proxy.err

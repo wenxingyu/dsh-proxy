@@ -20,7 +20,7 @@ export interface LanProxyOptions {
      * `dsh web` prints — a loopback address a LAN visitor cannot use. When this
      * hook is provided, an unauthenticated index request is redirected through
      * the token exchange for the caller's own origin, so the LAN URL logs itself
-     * in. Omit it (the standalone build has no host context) to pass the
+     * in. Omit it when the host offers no launch-token source to pass the
      * upstream 401 through unchanged.
      */
     authenticatedUrl?: (publicOrigin: string) => string | undefined;

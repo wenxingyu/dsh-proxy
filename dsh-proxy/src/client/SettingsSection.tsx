@@ -189,8 +189,8 @@ export function SettingsSection({ call, t }: SettingsSectionProps) {
       // The form is pre-filled with the current values and always submits the
       // FULL payload: clearing a field intentionally SETS it empty (both empty
       // disables password login), it never means "keep unchanged". The port
-      // field edits the PROXY's own listen port (like the standalone's target
-      // port); it must differ from the default service port.
+      // field edits the PROXY's own listen port; it must differ from the
+      // default service port.
       const port = Number(listenPort.trim())
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         setError(t('form.invalidPort'))

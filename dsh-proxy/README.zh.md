@@ -3,7 +3,7 @@
 DSH 插件：把 DeepSeek Harness Web 界面（默认 `127.0.0.1:3080`）转发到**另一个带认证的端口**，让同一局域网内的其他设备也能安全访问。
 
 - **HTTP + WebSocket 全协议转发**：任务状态、日志等实时推送不失效
-- **原生 Basic Auth（默认关闭）**：与独立版 dsh-proxy 一致，使用**浏览器自带的认证弹窗**，没有自绘登录页、没有会话 Cookie——默认用户名与密码均为空，局域网**开放访问**；在设置页**同时设置**用户名和密码后启用，外部访问时浏览器弹出原生 Basic Auth 登录框，成功后浏览器缓存凭据自动登录（含 WebSocket 握手）
+- **原生 Basic Auth（默认关闭）**：使用**浏览器自带的认证弹窗**，没有自绘登录页、没有会话 Cookie——默认用户名与密码均为空，局域网**开放访问**；在设置页**同时设置**用户名和密码后启用，外部访问时浏览器弹出原生 Basic Auth 登录框，成功后浏览器缓存凭据自动登录（含 WebSocket 握手）
 - **设置页面**：DSH 设置 → 「局域网代理」，显示监听端口/默认服务端口/**密码登录是否启用**，可修改代理监听端口、用户名、密码，可**启动/停止**代理，保存后自动重启转发服务（持久化到 `$DSH_HOME/dsh-proxy.json`）
 - **开箱即通的兼容修复**：`Host`/`Origin` 改写（通过 DSH `/api` 同源信任篱笆，LAN 访问不 403）、`crypto.randomUUID` polyfill 注入（LAN 非安全上下文下前端 RPC 可用）
 - **浏览器内的目录选择器**：DSH 默认会在「Web 只绑 loopback」时选用**宿主屏幕上的原生目录对话框**（`dsh-host-directory-picker-auto` 的判定），远程访问者看不到那个窗口。插件把该行固定为**应用内浏览选择器**（browse 后端 + 浏览器对话框），「添加工作区」在任何设备上都在页面里完成
@@ -11,7 +11,6 @@ DSH 插件：把 DeepSeek Harness Web 界面（默认 `127.0.0.1:3080`）转发�
 
 > 为什么需要它：DSH Web 服务端**故意拒绝** `--host 0.0.0.0`（避免把 RCE 直接暴露到网络），本插件是官方认可的"出网"方式——独立监听端口 + 认证 + 反代回 loopback。
 >
-> 独立版（Go/Node 单文件，不依赖 DSH）见 <https://github.com/wenxingyu/dsh-proxy>；本插件是它的集成版，认证方式与独立版一致（原生 Basic Auth）。
 
 ## 安装
 
@@ -29,7 +28,7 @@ dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 
 安装后包名为 **`@wenxingyu/dsh-proxy`**（scoped，带用户名前缀），`dsh plugin ls` 中显示为 `@wenxingyu/dsh-proxy@0.1.1`。
 
-安装后**重启 `dsh web`**（Ctrl+C 后重新运行）即生效。若 3081 被占用（例如独立版 dsh-proxy 还在运行），先停掉它，或在配置里换一个端口。
+安装后**重启 `dsh web`**（Ctrl+C 后重新运行）即生效。若 3081 被占用（例如另一个 dsh-proxy 实例还在运行），先停掉它，或在配置里换一个端口。
 
 ## 配置
 

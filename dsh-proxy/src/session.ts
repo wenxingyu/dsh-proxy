@@ -1,8 +1,7 @@
 /**
  * Authentication primitives for the LAN proxy: HTTP Basic Auth is the entire
- * gate, presented through the browser's NATIVE credential dialog — the same
- * model as the standalone dsh-proxy. There is no custom login page and no
- * session cookie: after a successful Basic login the browser caches the
+ * gate, presented through the browser's NATIVE credential dialog. There is no
+ * custom login page and no session cookie: after a successful Basic login the browser caches the
  * credentials for the origin and silently sends them on every request.
  *
  * Password login is active only when BOTH username and password are
