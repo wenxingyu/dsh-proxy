@@ -2811,6 +2811,7 @@ function attachBodyTransform(res, proxyRes, transform) {
 // src/proxy.ts
 var AUTH_REALM = "dsh-proxy";
 var PUBLIC_PATHS = /* @__PURE__ */ new Set(["/manifest.webmanifest", "/favicon.svg"]);
+var TOKEN_QUERY = "token";
 function lanAddresses(port) {
   const ips = [];
   for (const ifaces of Object.values(import_node_os2.default.networkInterfaces())) {
@@ -2848,7 +2849,42 @@ function startLanProxy(options) {
       }
     }
   });
-  proxy.on("proxyRes", (proxyRes, _req, res) => {
+  const publicOrigins = /* @__PURE__ */ new WeakMap();
+  const redirectIndexToTokenExchange = (req, res, statusCode) => {
+    if (statusCode !== 401 || options.authenticatedUrl === void 0) return false;
+    if (req.method !== "GET") return false;
+    let pathname;
+    let hasToken;
+    try {
+      const url = new URL(req.url ?? "/", "http://proxy.local");
+      pathname = url.pathname;
+      hasToken = url.searchParams.has(TOKEN_QUERY);
+    } catch {
+      return false;
+    }
+    if (pathname !== "/" || hasToken) return false;
+    const authority = publicOrigins.get(req);
+    if (authority === void 0) return false;
+    let target;
+    try {
+      target = options.authenticatedUrl(`http://${authority}`);
+    } catch {
+      return false;
+    }
+    if (target === void 0) return false;
+    res.writeHead(302, {
+      location: target,
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer"
+    });
+    res.end();
+    return true;
+  };
+  proxy.on("proxyRes", (proxyRes, req, res) => {
+    if (redirectIndexToTokenExchange(req, res, proxyRes.statusCode)) {
+      proxyRes.resume();
+      return;
+    }
     const contentType = String(proxyRes.headers["content-type"] ?? "");
     const isHtml = contentType.includes("text/html");
     const isJs = isJavaScriptContentType(contentType);
@@ -2879,6 +2915,7 @@ function startLanProxy(options) {
   };
   const server = import_node_http.default.createServer((req, res) => {
     const pathname = new URL(req.url ?? "/", "http://proxy.local").pathname;
+    if (req.headers.host !== void 0) publicOrigins.set(req, req.headers.host);
     if (PUBLIC_PATHS.has(pathname)) {
       alignOrigin(req);
       proxy.web(req, res);
@@ -3074,6 +3111,7 @@ var ProxyController = class {
       upstreamPort: this.options.upstreamPort,
       username: this.options.username,
       password: this.options.password,
+      ...this.opts.authenticatedUrl === void 0 ? {} : { authenticatedUrl: this.opts.authenticatedUrl },
       log
     });
     this.handle = handle;
@@ -3307,6 +3345,18 @@ function apply(ctx, config) {
       password: resolved.password
     },
     settingsFile: dshHomePath("dsh-proxy.json"),
+    // DSH mints its browser-session cookie only through the tokenized URL it
+    // prints at startup, which points at loopback. Rebuild that URL for the
+    // authority the browser actually used so a LAN visitor's first index
+    // request logs itself in instead of dead-ending on "dsh web
+    // authentication required".
+    authenticatedUrl: (publicOrigin) => {
+      try {
+        return ctx.connection.authenticatedUrl(publicOrigin);
+      } catch {
+        return void 0;
+      }
+    },
     log
   });
   ctx.effect(

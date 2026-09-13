@@ -52,6 +52,19 @@ export interface LanProxyOptions {
   username: string
   /** Basic Auth password; password login is enabled only when both it and `username` are set. */
   password: string
+  /**
+   * Build the host's launch-token URL for one public origin (the origin the
+   * BROWSER used, e.g. `http://192.168.1.20:3081`).
+   *
+   * DSH answers the index with 401 until the browser holds its per-process
+   * session cookie, and the cookie is only minted by opening the tokenized URL
+   * `dsh web` prints — a loopback address a LAN visitor cannot use. When this
+   * hook is provided, an unauthenticated index request is redirected through
+   * the token exchange for the caller's own origin, so the LAN URL logs itself
+   * in. Omit it (the standalone build has no host context) to pass the
+   * upstream 401 through unchanged.
+   */
+  authenticatedUrl?: (publicOrigin: string) => string | undefined
   /** Optional sink for human-readable lifecycle messages. */
   log?: (level: 'info' | 'warn' | 'error', message: string) => void
 }
@@ -75,6 +88,9 @@ const AUTH_REALM = 'dsh-proxy'
  * upstream serves them unauthenticated anyway.
  */
 const PUBLIC_PATHS = new Set(['/manifest.webmanifest', '/favicon.svg'])
+
+/** Query parameter DSH's index token exchange reads. */
+const TOKEN_QUERY = 'token'
 
 /** LAN IPv4 addresses the host currently has, as http URLs on `port`. */
 export function lanAddresses(port: number): string[] {
@@ -117,6 +133,56 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
     }
   })
 
+  // The browser's own authority, captured before http-proxy rewrites Host to
+  // the upstream (changeOrigin) — the token exchange has to send the browser
+  // back to the address it actually used.
+  const publicOrigins = new WeakMap<http.IncomingMessage, string>()
+
+  /**
+   * Send an unauthenticated index request through DSH's launch-token exchange
+   * instead of returning its "reopen the URL printed by dsh web" page, which
+   * only a loopback browser can act on.
+   *
+   * Only `GET /` without a token is redirected, so an API/asset 401 stays a
+   * 401 and a token the host rejects falls through to the upstream answer
+   * rather than looping.
+   * @returns whether the response was answered here.
+   */
+  const redirectIndexToTokenExchange = (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    statusCode: number | undefined,
+  ): boolean => {
+    if (statusCode !== 401 || options.authenticatedUrl === undefined) return false
+    if (req.method !== 'GET') return false
+    let pathname: string
+    let hasToken: boolean
+    try {
+      const url = new URL(req.url ?? '/', 'http://proxy.local')
+      pathname = url.pathname
+      hasToken = url.searchParams.has(TOKEN_QUERY)
+    } catch {
+      return false
+    }
+    if (pathname !== '/' || hasToken) return false
+    const authority = publicOrigins.get(req)
+    if (authority === undefined) return false
+    let target: string | undefined
+    try {
+      target = options.authenticatedUrl(`http://${authority}`)
+    } catch {
+      return false
+    }
+    if (target === undefined) return false
+    res.writeHead(302, {
+      location: target,
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    })
+    res.end()
+    return true
+  }
+
   // Inject the randomUUID polyfill into proxied HTML documents, and rewrite
   // served JavaScript so the client treats the authenticated proxy as
   // host-trusted (see clientpatch.ts). The upstream DSH server compresses its
@@ -126,7 +192,11 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
   // by the original encoding (see compression.ts). content-length is dropped
   // because the rewrite changes the body length; the chunked stream then
   // carries the body.
-  proxy.on('proxyRes', (proxyRes, _req, res) => {
+  proxy.on('proxyRes', (proxyRes, req, res) => {
+    if (redirectIndexToTokenExchange(req, res, proxyRes.statusCode)) {
+      proxyRes.resume()
+      return
+    }
     const contentType = String(proxyRes.headers['content-type'] ?? '')
     const isHtml = contentType.includes('text/html')
     const isJs = isJavaScriptContentType(contentType)
@@ -174,6 +244,7 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
 
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url ?? '/', 'http://proxy.local').pathname
+    if (req.headers.host !== undefined) publicOrigins.set(req, req.headers.host)
     // Public static files (PWA manifest, favicon): fetched without
     // credentials by the browser, so they bypass the auth gate.
     if (PUBLIC_PATHS.has(pathname)) {

@@ -11,6 +11,19 @@ export interface LanProxyOptions {
     username: string;
     /** Basic Auth password; password login is enabled only when both it and `username` are set. */
     password: string;
+    /**
+     * Build the host's launch-token URL for one public origin (the origin the
+     * BROWSER used, e.g. `http://192.168.1.20:3081`).
+     *
+     * DSH answers the index with 401 until the browser holds its per-process
+     * session cookie, and the cookie is only minted by opening the tokenized URL
+     * `dsh web` prints — a loopback address a LAN visitor cannot use. When this
+     * hook is provided, an unauthenticated index request is redirected through
+     * the token exchange for the caller's own origin, so the LAN URL logs itself
+     * in. Omit it (the standalone build has no host context) to pass the
+     * upstream 401 through unchanged.
+     */
+    authenticatedUrl?: (publicOrigin: string) => string | undefined;
     /** Optional sink for human-readable lifecycle messages. */
     log?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }

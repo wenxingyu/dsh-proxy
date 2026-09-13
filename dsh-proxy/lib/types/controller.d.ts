@@ -13,6 +13,12 @@ export interface ProxyControllerOptions {
     base: EffectiveProxyOptions;
     /** Path of the persisted runtime-settings JSON. */
     settingsFile: string;
+    /**
+     * Host hook building DSH's launch-token URL for a public origin, so a LAN
+     * visitor's first index request can log itself in (see
+     * {@link LanProxyOptions.authenticatedUrl}). Absent in the standalone build.
+     */
+    authenticatedUrl?: (publicOrigin: string) => string | undefined;
     /** Log sink (the plugin passes ctx.logger-based printer). */
     log: (level: 'info' | 'warn' | 'error', message: string) => void;
 }

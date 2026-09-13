@@ -153,6 +153,18 @@ export function apply(ctx: Context, config?: Config): void {
       password: resolved.password,
     },
     settingsFile: dshHomePath('dsh-proxy.json'),
+    // DSH mints its browser-session cookie only through the tokenized URL it
+    // prints at startup, which points at loopback. Rebuild that URL for the
+    // authority the browser actually used so a LAN visitor's first index
+    // request logs itself in instead of dead-ending on "dsh web
+    // authentication required".
+    authenticatedUrl: (publicOrigin) => {
+      try {
+        return ctx.connection.authenticatedUrl(publicOrigin)
+      } catch {
+        return undefined
+      }
+    },
     log,
   })
 
