@@ -233,9 +233,20 @@ export function SettingsSection({ call, t }: SettingsSectionProps) {
     }
   }
 
-  const authBadge = status === null || status.authEnabled
-    ? <span className="dsh_lanproxy_badge dsh_lanproxy_badgeOn">{t('status.authOn')}</span>
-    : <span className="dsh_lanproxy_badge dsh_lanproxy_badgeOff">{t('status.authOff')}</span>
+  // The badge states the security condition, not just the auth toggle: an open
+  // surface is red regardless of whether it is reachable from the network.
+  const authBadge = status !== null && status.lanExposed
+    ? <span className="dsh_lanproxy_badge dsh_lanproxy_badgeOff">{t('status.lanOpen')}</span>
+    : status !== null && status.authEnabled
+      ? <span className="dsh_lanproxy_badge dsh_lanproxy_badgeOn">{t('status.authOn')}</span>
+      : <span className="dsh_lanproxy_badge dsh_lanproxy_badgeOff">{t('status.authOff')}</span>
+
+  // The prominent warning for an unauthenticated surface that is actually up.
+  const securityWarning = status !== null && status.lanExposed
+    ? <p className="dsh_lanproxy_warn" role="alert">{t('status.lanExposedHint')}</p>
+    : status !== null && !status.authEnabled
+      ? <p className="dsh_lanproxy_hint">{t('status.authOffHint')}</p>
+      : null
 
   const statusCard = phase === 'loading' ? (
     <p className="dsh_lanproxy_hint">{t('status.loading')}</p>
@@ -259,6 +270,7 @@ export function SettingsSection({ call, t }: SettingsSectionProps) {
       />
       <StatusRow label={t('status.username')} value={status.username} />
       <StatusRow label={t('status.auth')} value={authBadge} />
+      {securityWarning}
       <p className="dsh_lanproxy_hint">
         {status.persisted ? t('status.persistedOn') : t('status.persistedOff')}
       </p>

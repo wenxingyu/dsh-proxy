@@ -287,6 +287,108 @@ export const cssText = `
   font-size: 12px;
   line-height: 18px;
 }
+/* Security notice: the surface is reachable from the network without a
+   password. Distinct from .dsh_lanproxy_error (red, used for real failures) by
+   its warning tint and a soft left rule, so a hard bind failure and a security
+   warning never read as the same thing. */
+.dsh_lanproxy_warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--dsw-alias-state-warn-primary, #d29922);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #d29922) 10%, transparent);
+  /* The accent stays in the rule and the tint; the text uses the theme's label
+     so it stays legible on both the amber wash and a light theme. */
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+/* The frame-wide popup (shell.overlay seat). The seat's layer is click-through
+   and every child opts back into pointer events, so this card is the only thing
+   that captures the mouse — the app underneath stays fully usable, which is why
+   the notice is a card rather than a blocking modal dialog. Top-center keeps it
+   clear of the sidebar and the conversation composer, and it owns no backdrop,
+   so it reads as an alert that waits instead of a wall. */
+.dsh_lanproxy_notice {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  width: min(460px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-state-error-primary, #f85149);
+  border-radius: 12px;
+  /* A hint of the error tint keeps the card alarming in a LIGHT theme too,
+     where the border alone would read as an ordinary card. */
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #f85149) 8%, var(--dsw-alias-bg-layer-2, #161b22));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgb(0 0 0 / 45%));
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  transform: translateX(-50%);
+  animation: dsh_lanproxy_noticeIn 160ms ease-out;
+}
+@keyframes dsh_lanproxy_noticeIn {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dsh_lanproxy_notice { animation: none; }
+}
+.dsh_lanproxy_noticeTitle {
+  margin: 0;
+  /* The red lives in the card border and the body text: a red TITLE (this used
+     to be error-colored) is the classic light-theme legibility trap. */
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.dsh_lanproxy_noticeBody {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.dsh_lanproxy_noticeHint {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, #c9d1d9);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.dsh_lanproxy_noticeButton {
+  align-self: flex-end;
+  padding: 4px 14px;
+  border: 1px solid var(--dsw-alias-accent, #2f81f7);
+  border-radius: 8px;
+  /* Same pair as the settings page's primary button: an accent FILL with the
+     foreground token that belongs on it. The first cut used the theme's
+     label-primary token over a hand-picked dark background, and since that
+     label resolves to BLACK in the light theme the result was black-on-black. */
+  background: var(--dsw-alias-accent, #2f81f7);
+  color: var(--dsw-alias-fg-on-accent, #ffffff);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.dsh_lanproxy_noticeButton:hover {
+  background: var(--dsw-alias-accent-hover, #388bfd);
+  border-color: var(--dsw-alias-accent-hover, #388bfd);
+}
+.dsh_lanproxy_noticeButton:active {
+  background: var(--dsw-alias-accent-active, #1f6feb);
+  border-color: var(--dsw-alias-accent-active, #1f6feb);
+}
+.dsh_lanproxy_noticeButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-error-primary, #f85149);
+  outline-offset: 2px;
+}
 `
 
 /** Inject the stylesheet once (idempotent). */

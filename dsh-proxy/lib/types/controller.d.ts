@@ -1,4 +1,4 @@
-import type { LanProxyStatus, LanProxyUpdateResult } from './contract.ts';
+import { type LanProxyStatus, type LanProxyUpdateResult } from './contract.ts';
 /** The fully-resolved runtime options of one proxy instance. */
 export interface EffectiveProxyOptions {
     listenHost: string;

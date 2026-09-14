@@ -34,6 +34,7 @@ const STATUS: LanProxyStatus = {
   username: 'admin',
   password: 's3cret',
   authEnabled: true,
+  lanExposed: false,
   persisted: false,
 }
 
@@ -122,6 +123,39 @@ describe('status card', () => {
     expect(text).toContain('未运行')
     expect(text).toContain('不可访问')
     expect(text).not.toContain('运行中')
+  })
+
+  it('warns in red when the running listener is reachable from the LAN without a password', async () => {
+    const { call } = makeCall({
+      status: () => Promise.resolve({
+        ok: true,
+        value: { ...STATUS, username: '', password: '', authEnabled: false, lanExposed: true },
+      }),
+    })
+    mounted = mount(<SettingsSection {...props(call)} />)
+    await flush()
+    const text = mounted.container.textContent ?? ''
+    // The badge names the exposure rather than a bland "not enabled"...
+    expect(text).toContain(zh['status.lanOpen'])
+    // ...and the prominent security warning explains the consequence.
+    const warning = mounted.container.querySelector('.dsh_lanproxy_warn')
+    expect(warning).not.toBeNull()
+    expect(warning?.getAttribute('role')).toBe('alert')
+    expect(warning?.textContent).toContain(zh['status.lanExposedHint'])
+  })
+
+  it('does not warn when no password is set but the listener is loopback-only', async () => {
+    const { call } = makeCall({
+      status: () => Promise.resolve({
+        ok: true,
+        value: { ...STATUS, listenHost: '127.0.0.1', username: '', password: '', authEnabled: false, lanExposed: false },
+      }),
+    })
+    mounted = mount(<SettingsSection {...props(call)} />)
+    await flush()
+    const text = mounted.container.textContent ?? ''
+    expect(text).toContain(zh['status.authOffHint'])
+    expect(mounted.container.querySelector('.dsh_lanproxy_warn')).toBeNull()
   })
 
   it('shows the unreachable banner when the status RPC fails', async () => {
@@ -267,7 +301,7 @@ describe('update form', () => {
   })
 
   it('submits empty strings when credentials are cleared (set-empty semantics)', async () => {
-    const cleared = { ...STATUS, username: '', password: '', authEnabled: false }
+    const cleared = { ...STATUS, username: '', password: '', authEnabled: false, lanExposed: true }
     const { call, calls } = makeCall({
       update: () => Promise.resolve({ ok: true, value: { status: cleared, notice: 'saved-restarted', message: '已保存并重启转发服务' } }),
     })
@@ -287,7 +321,7 @@ describe('update form', () => {
   })
 
   it('localizes the credentials-partial notice from the host', async () => {
-    const partial = { ...STATUS, username: 'half', password: '', authEnabled: false }
+    const partial = { ...STATUS, username: 'half', password: '', authEnabled: false, lanExposed: true }
     const { call } = makeCall({
       update: () => Promise.resolve({
         ok: true,

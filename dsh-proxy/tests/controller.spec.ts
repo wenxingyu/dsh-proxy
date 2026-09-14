@@ -78,6 +78,7 @@ describe('ProxyController status', () => {
     expect(status.upstreamPort).toBe(upstreamPort)
     expect(status.username).toBe('admin')
     expect(status.authEnabled).toBe(true)
+    expect(status.lanExposed).toBe(false)
     expect(status.persisted).toBe(false)
     expect(status.password).toBe('admin')
     expect(logs.some((line) => line.includes('listening'))).toBe(true)
@@ -198,6 +199,58 @@ describe('ProxyController update', () => {
     expect(partial.result.status.authEnabled).toBe(false)
     expect(partial.result.message).toContain('需同时设置用户名和密码')
     expect(listenPort).toBeGreaterThan(0)
+  })
+
+  it('flags an open LAN listener in red and logs the security warning', async () => {
+    const upstreamPort = await startUpstream('OPEN')
+    controller = new ProxyController({
+      // The plain "open LAN access" configuration this plugin has always
+      // allowed: a network-reachable bind with no credentials. Behavior is
+      // unchanged — the hardening is that it is now stated loudly.
+      base: { ...baseOptions(upstreamPort), listenHost: '0.0.0.0', username: '', password: '' },
+      settingsFile: tempSettingsFile(),
+      log: (level, message) => logs.push(`${level}:${message}`),
+    })
+    await controller.start()
+
+    const status = controller.status()
+    expect(status.proxyListening).toBe(true)
+    expect(status.authEnabled).toBe(false)
+    expect(status.lanExposed).toBe(true)
+
+    const warning = logs.find((line) => line.startsWith('warn:') && line.includes('SECURITY WARNING'))
+    expect(warning).toBeDefined()
+    // The warning names the reachable address and the consequence.
+    expect(warning).toContain(`:${status.listenPort}`)
+    expect(warning).toContain('WITHOUT a password')
+
+    // The listener really is reachable without credentials, as warned.
+    const anon = await fetchThrough(`http://127.0.0.1:${status.listenPort}/`)
+    expect(anon.status).toBe(200)
+    expect(anon.text).toBe('OPEN')
+
+    // Setting BOTH credentials clears the flag and enables the gate.
+    const secured = await controller.update({ username: 'admin', password: 's3cret' })
+    expect(secured.ok).toBe(true)
+    if (!secured.ok) return
+    expect(secured.result.status.lanExposed).toBe(false)
+    expect(secured.result.status.authEnabled).toBe(true)
+    const gated = await fetchThrough(`http://127.0.0.1:${secured.result.status.listenPort}/`)
+    expect(gated.status).toBe(401)
+  })
+
+  it('does not flag a password-free loopback listener', async () => {
+    const upstreamPort = await startUpstream('LOCAL')
+    controller = new ProxyController({
+      base: { ...baseOptions(upstreamPort), listenHost: '127.0.0.1', username: '', password: '' },
+      settingsFile: tempSettingsFile(),
+      log: () => {},
+    })
+    await controller.start()
+    const status = controller.status()
+    expect(status.proxyListening).toBe(true)
+    expect(status.authEnabled).toBe(false)
+    expect(status.lanExposed).toBe(false)
   })
 
   it('persists the listen port and credentials across controller instances', async () => {

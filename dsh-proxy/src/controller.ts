@@ -8,7 +8,7 @@
  */
 import { lanAddresses, startLanProxy, type LanProxyHandle } from './proxy.ts'
 import { RuntimeSettingsFile, normalizeRuntimeSettings, validateUpdate } from './settings.ts'
-import type { LanProxyStatus, LanProxyUpdatePayload, LanProxyUpdateResult } from './contract.ts'
+import { isLanExposed, type LanProxyStatus, type LanProxyUpdatePayload, type LanProxyUpdateResult } from './contract.ts'
 
 /** The fully-resolved runtime options of one proxy instance. */
 export interface EffectiveProxyOptions {
@@ -106,10 +106,19 @@ export class ProxyController {
       for (const url of urls.lan) log('info', `dsh-proxy: 局域网访问 ${url}`)
       if (this.options.username !== '' && this.options.password !== '') {
         log('info', `dsh-proxy: password login enabled (username: ${this.options.username}) — browser Basic Auth`)
-      } else if (this.options.username !== '' || this.options.password !== '') {
-        log('warn', 'dsh-proxy: password login NOT enabled — username and password must BOTH be set (only one is configured); the LAN surface is open')
       } else {
-        log('warn', 'dsh-proxy: password login is disabled (username and password are both empty); the LAN surface is open')
+        // The listener stays exactly as configured (a reachable port still
+        // challenges with Basic Auth the moment credentials are set), but an
+        // unauthenticated LAN surface is stated loudly and unambiguously: this
+        // proxy hands its clients the privileged DSH RPC surface behind the
+        // loopback Host rewrite.
+        const lanUrls = urls.lan.length > 0
+          ? urls.lan.join('  ')
+          : `http://${this.options.listenHost}:${bound}`
+        const reason = this.options.username !== '' || this.options.password !== ''
+          ? 'only one of username/password is set, so password login is OFF'
+          : 'username and password are both empty, so password login is OFF'
+        log('warn', `dsh-proxy: 安全提示/SECURITY WARNING — ${reason}; anyone who can reach ${lanUrls} gets full access to DSH (HTTP + WebSocket, including privileged /api RPC) WITHOUT a password. Set BOTH a username and a password in DSH settings → LAN Proxy, or bind listenHost to 127.0.0.1.`)
       }
       return { ok: true }
     } catch (err) {
@@ -159,6 +168,7 @@ export class ProxyController {
    * reflects the most recent probe (false until the first probe runs).
    */
   status(): LanProxyStatus {
+    const authEnabled = this.options.username !== '' && this.options.password !== ''
     return {
       listenHost: this.options.listenHost,
       listenPort: this.boundPort ?? this.options.listenPort,
@@ -168,7 +178,10 @@ export class ProxyController {
       upstreamReachable: this.probeCache?.reachable ?? false,
       username: this.options.username,
       password: this.options.password,
-      authEnabled: this.options.username !== '' && this.options.password !== '',
+      authEnabled,
+      // The settings page warns in red about this one; the rule lives in the
+      // shared contract so the host and the section can never disagree.
+      lanExposed: isLanExposed(this.options.listenHost, this.boundPort !== null, authEnabled),
       persisted: this.persisted(),
     }
   }

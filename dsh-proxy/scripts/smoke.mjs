@@ -247,6 +247,14 @@ async function pluginContractPhase() {
       cleared?.ok === true && cleared.value?.status?.authEnabled === false && cleared.value?.status?.password === '',
       JSON.stringify(cleared),
     )
+    // The host runs on loopback here, so a password-free listener is NOT an
+    // open LAN surface: the exposure flag that drives the red warning must stay
+    // off (unit tests cover the LAN-exposed branch).
+    check(
+      'a password-free loopback listener is not flagged as LAN-exposed',
+      cleared.value?.status?.lanExposed === false,
+      JSON.stringify(cleared.value?.status),
+    )
     const reopened = await callRoute('update', { username: 'smoke-user', password: 'smoke-pass' })
     check(
       're-setting both credentials re-enables password login',

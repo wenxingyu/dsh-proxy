@@ -27,6 +27,7 @@ const STATUS: LanProxyStatus = {
   username: 'admin',
   password: 's3cret',
   authEnabled: true,
+  lanExposed: false,
   persisted: false,
 }
 

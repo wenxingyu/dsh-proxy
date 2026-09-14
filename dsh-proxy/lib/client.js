@@ -188,7 +188,8 @@ function SettingsSection({ call, t }) {
       setSaving(false);
     }
   };
-  const authBadge = status === null || status.authEnabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOn", children: t("status.authOn") }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOff", children: t("status.authOff") });
+  const authBadge = status !== null && status.lanExposed ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOff", children: t("status.lanOpen") }) : status !== null && status.authEnabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOn", children: t("status.authOn") }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOff", children: t("status.authOff") });
+  const securityWarning = status !== null && status.lanExposed ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_warn", role: "alert", children: t("status.lanExposedHint") }) : status !== null && !status.authEnabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("status.authOffHint") }) : null;
   const statusCard = phase === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("status.loading") }) : phase === "error" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_statusError", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_error", children: t("status.unreachable") }),
     statusError !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: statusError }) : null,
@@ -212,6 +213,7 @@ function SettingsSection({ call, t }) {
     ),
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)(StatusRow, { label: t("status.username"), value: status.username }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)(StatusRow, { label: t("status.auth"), value: authBadge }),
+    securityWarning,
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: status.persisted ? t("status.persistedOn") : t("status.persistedOff") })
   ] }) : null;
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "dsh_lanproxy_section", "aria-labelledby": "dsh-lanproxy-settings-title", children: [
@@ -334,6 +336,84 @@ function SettingsSection({ call, t }) {
   ] });
 }
 
+// src/client/LanExposureNotice.tsx
+var import_react2 = require("react");
+
+// src/client/transport.ts
+var TRANSPORT_FAILURE = "transport";
+function carrierFailure(message, details = {}) {
+  return { ok: false, error: { code: TRANSPORT_FAILURE, message, details } };
+}
+async function readEnvelope(response) {
+  try {
+    const body = await response.json();
+    if (typeof body === "object" && body !== null && typeof body.ok === "boolean") {
+      return body;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+var callLanProxy = async (endpoint, payload) => {
+  const body = { endpoint, payload: payload ?? {} };
+  let response;
+  try {
+    response = await fetch(LAN_PROXY_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    return carrierFailure(error instanceof Error ? error.message : String(error));
+  }
+  const envelope = await readEnvelope(response);
+  if (envelope !== null) return envelope;
+  if (!response.ok) {
+    const detail = response.statusText.length > 0 ? `${response.status} ${response.statusText}` : String(response.status);
+    return carrierFailure(detail, { status: response.status });
+  }
+  return carrierFailure("response body is not a result envelope");
+};
+
+// src/client/LanExposureNotice.tsx
+var import_jsx_runtime2 = require("react/jsx-runtime");
+function decideExposure(status) {
+  if (status === null || !status.lanExposed) return { kind: "silent" };
+  return { kind: "show" };
+}
+var checkedThisPageLoad = false;
+function LanExposureNotice({ t }) {
+  const [exposed, setExposed] = (0, import_react2.useState)(null);
+  (0, import_react2.useEffect)(() => {
+    if (checkedThisPageLoad) return;
+    checkedThisPageLoad = true;
+    void (async () => {
+      const result = await callLanProxy(ENDPOINT_STATUS, {});
+      const status = result.ok ? result.value : null;
+      if (decideExposure(status).kind !== "show" || status === null) return;
+      setExposed({ listenHost: status.listenHost, listenPort: status.listenPort });
+    })();
+  }, []);
+  if (exposed === null) return null;
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_notice", role: "alert", "aria-live": "assertive", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_noticeTitle", children: t("notice.title") }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_noticeBody", children: t("notice.body", { address: `${exposed.listenHost}:${exposed.listenPort}` }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_noticeHint", children: t("notice.hint") }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      "button",
+      {
+        type: "button",
+        className: "dsh_lanproxy_noticeButton",
+        onClick: () => {
+          setExposed(null);
+        },
+        children: t("notice.dismiss")
+      }
+    )
+  ] });
+}
+
 // src/client/locales.ts
 var NS = "dsh-proxy";
 var zh = {
@@ -348,12 +428,19 @@ var zh = {
   "status.username": "\u5F53\u524D\u7528\u6237\u540D",
   "status.auth": "\u5BC6\u7801\u767B\u5F55",
   "status.authOn": "\u5DF2\u542F\u7528",
-  "status.authOff": "\u672A\u542F\u7528\uFF08\u5C40\u57DF\u7F51\u5F00\u653E\u8BBF\u95EE\uFF09",
+  "status.authOff": "\u672A\u542F\u7528",
+  "status.lanOpen": "\u672A\u542F\u7528\uFF08\u5C40\u57DF\u7F51\u5F00\u653E\u8BBF\u95EE\uFF09",
+  "status.lanExposedHint": "\u26A0\uFE0F \u5B89\u5168\u98CE\u9669\uFF1A\u4EE3\u7406\u6B63\u5728\u76D1\u542C\u5BF9\u5916\u5730\u5740\uFF0C\u4E14\u672A\u8BBE\u7F6E\u5BC6\u7801\u767B\u5F55\u2014\u2014\u5C40\u57DF\u7F51\u5185\u4EFB\u4F55\u4EBA\u90FD\u80FD\u76F4\u63A5\u8BBF\u95EE DSH\uFF08\u542B\u8BBE\u7F6E\u3001\u51ED\u636E\u7B49\u7279\u6743\u63A5\u53E3\uFF09\u3002\u8BF7\u5728\u4E0B\u65B9\u540C\u65F6\u586B\u5199\u7528\u6237\u540D\u548C\u5BC6\u7801\u5E76\u300C\u5E94\u7528\u300D\uFF0C\u6216\u5C06 listenHost \u6539\u4E3A 127.0.0.1\u3002",
+  "status.authOffHint": "\u672A\u8BBE\u7F6E\u5BC6\u7801\u767B\u5F55\u3002\u5F53\u524D\u4EC5\u672C\u673A\u53EF\u8BBF\u95EE\uFF0C\u6682\u4E0D\u6784\u6210\u98CE\u9669\uFF1B\u82E5\u8981\u5F00\u653E\u5C40\u57DF\u7F51\u8BBF\u95EE\uFF0C\u8BF7\u540C\u65F6\u8BBE\u7F6E\u7528\u6237\u540D\u548C\u5BC6\u7801\u3002",
   "status.persistedOn": "\u5B58\u5728\u5DF2\u4FDD\u5B58\u7684\u8FD0\u884C\u914D\u7F6E\uFF08\u4F18\u5148\u4E8E cordis \u914D\u7F6E\uFF09",
   "status.persistedOff": "\u4F7F\u7528 cordis \u914D\u7F6E",
   "status.loading": "\u52A0\u8F7D\u4E2D\u2026",
   "status.unreachable": "\u65E0\u6CD5\u8FDE\u63A5\u4EE3\u7406\u670D\u52A1\uFF0C\u8BF7\u786E\u8BA4\u63D2\u4EF6\u5DF2\u542F\u7528\u5E76\u91CD\u542F\u8FC7 dsh web\u3002",
   "status.retry": "\u91CD\u8BD5",
+  "notice.title": "\u26A0\uFE0F \u5C40\u57DF\u7F51\u4EE3\u7406\u5F53\u524D\u65E0\u5BC6\u7801\u5BF9\u5916\u5F00\u653E",
+  "notice.body": "{address} \u6B63\u5728\u5BF9\u5C40\u57DF\u7F51\u76D1\u542C\uFF0C\u4E14\u6CA1\u6709\u8BBE\u7F6E\u5BC6\u7801\u767B\u5F55\uFF1A\u5C40\u57DF\u7F51\u5185\u4EFB\u4F55\u4EBA\u90FD\u80FD\u76F4\u63A5\u6253\u5F00 DSH\uFF0C\u5305\u62EC\u8BBE\u7F6E\u3001\u51ED\u636E\u7B49\u7279\u6743\u63A5\u53E3\u3002",
+  "notice.hint": "\u4FEE\u590D\u65B9\u5F0F\uFF1A\u6253\u5F00 DSH \u8BBE\u7F6E \u2192\u300C\u5C40\u57DF\u7F51\u4EE3\u7406\u300D\uFF0C\u540C\u65F6\u586B\u5199\u7528\u6237\u540D\u548C\u5BC6\u7801\u5E76\u300C\u5E94\u7528\u300D\uFF1B\u82E5\u53EA\u9700\u672C\u673A\u4F7F\u7528\uFF0C\u53EF\u5728 profile \u7684 cordis.patch.yml \u4E2D\u628A listenHost \u6539\u4E3A 127.0.0.1\u3002",
+  "notice.dismiss": "\u6211\u77E5\u9053\u4E86",
   "control.start": "\u542F\u52A8",
   "control.stop": "\u505C\u6B62",
   "control.started": "\u4EE3\u7406\u670D\u52A1\u5DF2\u542F\u52A8",
@@ -393,12 +480,19 @@ var en = {
   "status.username": "Username",
   "status.auth": "Password login",
   "status.authOn": "Enabled",
-  "status.authOff": "Not enabled (open access)",
+  "status.authOff": "Not enabled",
+  "status.lanOpen": "Not enabled (open LAN access)",
+  "status.lanExposedHint": "\u26A0\uFE0F Security risk: the proxy is listening on a network address while password login is off \u2014 anyone on the LAN can reach DSH directly, including its privileged settings/credentials RPC. Set BOTH a username and a password below and Apply, or change listenHost to 127.0.0.1.",
+  "status.authOffHint": "Password login is off. The listener is currently reachable from this machine only, so there is no exposure yet; set BOTH a username and a password before exposing it to the LAN.",
   "status.persistedOn": "A saved runtime config overrides the cordis config",
   "status.persistedOff": "Using the cordis config",
   "status.loading": "Loading\u2026",
   "status.unreachable": "Cannot reach the proxy service \u2014 make sure the plugin is enabled and dsh web was restarted.",
   "status.retry": "Retry",
+  "notice.title": "\u26A0\uFE0F The LAN proxy is open without a password",
+  "notice.body": "{address} is listening on the network with password login off: anyone on the LAN can open DSH directly, including its privileged settings and credentials RPC.",
+  "notice.hint": `To fix it, open DSH settings \u2192 "LAN Proxy", set BOTH a username and a password, and Apply. If this machine is all you need, set listenHost to 127.0.0.1 in the profile's cordis.patch.yml.`,
+  "notice.dismiss": "Got it",
   "control.start": "Start",
   "control.stop": "Stop",
   "control.started": "Proxy service started",
@@ -704,6 +798,108 @@ var cssText = `
   font-size: 12px;
   line-height: 18px;
 }
+/* Security notice: the surface is reachable from the network without a
+   password. Distinct from .dsh_lanproxy_error (red, used for real failures) by
+   its warning tint and a soft left rule, so a hard bind failure and a security
+   warning never read as the same thing. */
+.dsh_lanproxy_warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--dsw-alias-state-warn-primary, #d29922);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #d29922) 10%, transparent);
+  /* The accent stays in the rule and the tint; the text uses the theme's label
+     so it stays legible on both the amber wash and a light theme. */
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+/* The frame-wide popup (shell.overlay seat). The seat's layer is click-through
+   and every child opts back into pointer events, so this card is the only thing
+   that captures the mouse \u2014 the app underneath stays fully usable, which is why
+   the notice is a card rather than a blocking modal dialog. Top-center keeps it
+   clear of the sidebar and the conversation composer, and it owns no backdrop,
+   so it reads as an alert that waits instead of a wall. */
+.dsh_lanproxy_notice {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  width: min(460px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-state-error-primary, #f85149);
+  border-radius: 12px;
+  /* A hint of the error tint keeps the card alarming in a LIGHT theme too,
+     where the border alone would read as an ordinary card. */
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #f85149) 8%, var(--dsw-alias-bg-layer-2, #161b22));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgb(0 0 0 / 45%));
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  transform: translateX(-50%);
+  animation: dsh_lanproxy_noticeIn 160ms ease-out;
+}
+@keyframes dsh_lanproxy_noticeIn {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dsh_lanproxy_notice { animation: none; }
+}
+.dsh_lanproxy_noticeTitle {
+  margin: 0;
+  /* The red lives in the card border and the body text: a red TITLE (this used
+     to be error-colored) is the classic light-theme legibility trap. */
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.dsh_lanproxy_noticeBody {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.dsh_lanproxy_noticeHint {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, #c9d1d9);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.dsh_lanproxy_noticeButton {
+  align-self: flex-end;
+  padding: 4px 14px;
+  border: 1px solid var(--dsw-alias-accent, #2f81f7);
+  border-radius: 8px;
+  /* Same pair as the settings page's primary button: an accent FILL with the
+     foreground token that belongs on it. The first cut used the theme's
+     label-primary token over a hand-picked dark background, and since that
+     label resolves to BLACK in the light theme the result was black-on-black. */
+  background: var(--dsw-alias-accent, #2f81f7);
+  color: var(--dsw-alias-fg-on-accent, #ffffff);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.dsh_lanproxy_noticeButton:hover {
+  background: var(--dsw-alias-accent-hover, #388bfd);
+  border-color: var(--dsw-alias-accent-hover, #388bfd);
+}
+.dsh_lanproxy_noticeButton:active {
+  background: var(--dsw-alias-accent-active, #1f6feb);
+  border-color: var(--dsw-alias-accent-active, #1f6feb);
+}
+.dsh_lanproxy_noticeButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-error-primary, #f85149);
+  outline-offset: 2px;
+}
 `;
 function adoptStyles() {
   if (document.getElementById(STYLE_ID) !== null) return;
@@ -712,43 +908,6 @@ function adoptStyles() {
   style.textContent = cssText;
   document.head.appendChild(style);
 }
-
-// src/client/transport.ts
-var TRANSPORT_FAILURE = "transport";
-function carrierFailure(message, details = {}) {
-  return { ok: false, error: { code: TRANSPORT_FAILURE, message, details } };
-}
-async function readEnvelope(response) {
-  try {
-    const body = await response.json();
-    if (typeof body === "object" && body !== null && typeof body.ok === "boolean") {
-      return body;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-var callLanProxy = async (endpoint, payload) => {
-  const body = { endpoint, payload: payload ?? {} };
-  let response;
-  try {
-    response = await fetch(LAN_PROXY_PATH, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body)
-    });
-  } catch (error) {
-    return carrierFailure(error instanceof Error ? error.message : String(error));
-  }
-  const envelope = await readEnvelope(response);
-  if (envelope !== null) return envelope;
-  if (!response.ok) {
-    const detail = response.statusText.length > 0 ? `${response.status} ${response.statusText}` : String(response.status);
-    return carrierFailure(detail, { status: response.status });
-  }
-  return carrierFailure("response body is not a result envelope");
-};
 
 // src/client/index.ts
 var inject = ["slots", "locale"];
@@ -765,6 +924,12 @@ function apply(ctx) {
     locale: NS,
     inject: () => ({ call: callLanProxy })
   }, SettingsSection));
+  ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+    name: "shell.overlay",
+    id: "dsh-proxy-exposure-notice",
+    order: 100,
+    locale: NS
+  }, LanExposureNotice));
 }
 return module.exports; } });
 //# sourceMappingURL=client.js.map

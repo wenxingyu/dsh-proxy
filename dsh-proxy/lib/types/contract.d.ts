@@ -75,9 +75,36 @@ export interface LanProxyStatus {
     password: string;
     /** Whether the auth gate is on (both credentials non-empty). */
     authEnabled: boolean;
+    /**
+     * Whether the running listener is reachable from the network without a
+     * password (see {@link isLanExposed}). The settings section flags this in red
+     * and the host logs it loudly at startup; it is a warning, not a blocker —
+     * the listener itself is exactly as configured.
+     */
+    lanExposed: boolean;
     /** Whether a persisted runtime override exists on top of the cordis config. */
     persisted: boolean;
 }
+/**
+ * Whether the proxy is currently reachable from the network WITHOUT a password
+ * — the security condition the settings page warns about, and the host logs
+ * loudly at startup.
+ *
+ * Deliberately narrow: it holds only while the listener is actually up, bound
+ * to a non-loopback host, with the auth gate off. A loopback-only listener
+ * carries no such exposure (the DSH user already sits on this machine) and is
+ * not flagged; a service that is merely stopped is not flagged either, since
+ * nothing is published until it binds.
+ *
+ * Pure and shared: the host computes it from its own effective options and the
+ * settings section renders from the status it receives, so both halves agree.
+ *
+ * @param listenHost - the configured bind host.
+ * @param proxyListening - whether the listener is currently bound.
+ * @param authEnabled - whether password login is on (BOTH credentials set).
+ * @returns true when the surface is open to the network.
+ */
+export declare function isLanExposed(listenHost: string, proxyListening: boolean, authEnabled: boolean): boolean;
 /** Settings-section patch: only fields present are changed; omitted fields keep their values. */
 export interface LanProxyUpdatePayload {
     /** New proxy listen port (1–65535, must differ from the default service port). */

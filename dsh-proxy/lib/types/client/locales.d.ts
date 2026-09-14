@@ -14,11 +14,18 @@ export declare const zh: {
     'status.auth': string;
     'status.authOn': string;
     'status.authOff': string;
+    'status.lanOpen': string;
+    'status.lanExposedHint': string;
+    'status.authOffHint': string;
     'status.persistedOn': string;
     'status.persistedOff': string;
     'status.loading': string;
     'status.unreachable': string;
     'status.retry': string;
+    'notice.title': string;
+    'notice.body': string;
+    'notice.hint': string;
+    'notice.dismiss': string;
     'control.start': string;
     'control.stop': string;
     'control.started': string;
