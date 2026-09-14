@@ -161,8 +161,12 @@ describe('ProxyController update', () => {
     expect(out.ok).toBe(true)
     if (!out.ok) return
 
+    // A loopback browser is a secure context, so a rejected credential lands on
+    // the login gate (303) rather than a 401 dialog; what matters is that the OLD
+    // pair no longer reaches the upstream.
     const oldCreds = await fetchThrough(`http://127.0.0.1:${out.result.status.listenPort}/`, { authorization: basic('admin', 'admin') })
-    expect(oldCreds.status).toBe(401)
+    expect(oldCreds.status).toBe(303)
+    expect(oldCreds.text).not.toBe('UPSTREAM')
     const newCreds = await fetchThrough(`http://127.0.0.1:${out.result.status.listenPort}/`, { authorization: basic('alice', 's3cret') })
     expect(newCreds.status).toBe(200)
     expect(newCreds.text).toBe('UPSTREAM')
@@ -235,8 +239,10 @@ describe('ProxyController update', () => {
     if (!secured.ok) return
     expect(secured.result.status.lanExposed).toBe(false)
     expect(secured.result.status.authEnabled).toBe(true)
+    // The credential gate is live: an anonymous index request no longer passes.
     const gated = await fetchThrough(`http://127.0.0.1:${secured.result.status.listenPort}/`)
-    expect(gated.status).toBe(401)
+    expect(gated.status).toBe(303)
+    expect(gated.text).not.toBe('OPEN')
   })
 
   it('does not flag a password-free loopback listener', async () => {

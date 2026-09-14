@@ -12,14 +12,23 @@ import net from 'node:net'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { startLanProxy } from '../lib/index.cjs'
+import { AuthState, startLanProxy } from '../lib/index.cjs'
 
 const UPSTREAM = Number(process.env.DSH_SMOKE_UPSTREAM_PORT ?? 3080)
 const USER = process.env.DSH_SMOKE_USER ?? 'admin'
 const PASS = process.env.DSH_SMOKE_PASS ?? 'admin'
+/** Optional DSH launch token: set it to exercise the full app flow (polyfill, WS). */
+const TOKEN = process.env.DSH_SMOKE_TOKEN ?? ''
 
 let passed = 0
 let failed = 0
+let skipped = 0
+
+/** Record an environment-dependent check as not applicable (never as a failure). */
+function skip(name, why) {
+  skipped++
+  console.log(`  SKIP  ${name} — ${why}`)
+}
 
 function check(name, ok, detail = '') {
   if (ok) {
@@ -71,6 +80,9 @@ function rawUpgrade(port, path, headers) {
 async function main() {
   const upstream = `http://127.0.0.1:${UPSTREAM}`
   console.log(`dsh-proxy smoke — upstream ${upstream}, auth ${USER}/***`)
+  // A real session store, exactly like the controller passes in: the gate is
+  // session-based now, with Basic kept as the compatibility path.
+  const auth = new AuthState()
   const handle = startLanProxy({
     listenHost: '127.0.0.1',
     listenPort: 0,
@@ -78,6 +90,7 @@ async function main() {
     upstreamPort: UPSTREAM,
     username: USER,
     password: PASS,
+    auth,
     log: (level, message) => console.log(`  [proxy:${level}] ${message}`),
   })
   const port = await handle.ready
@@ -86,17 +99,29 @@ async function main() {
   const authorization = `Basic ${Buffer.from(`${USER}:${PASS}`).toString('base64')}`
 
   try {
-    // 1. anonymous navigation → 401 with the native Basic challenge
+    // 1. anonymous navigation → the login page (one gate everywhere)
     let res = await fetch(`${base}/`, { redirect: 'manual', headers: { accept: 'text/html' } })
     check(
-      'anonymous / → 401 Basic challenge',
-      res.status === 401 && /^Basic realm=/.test(res.headers.get('www-authenticate') ?? ''),
-      `status=${res.status} www-auth=${res.headers.get('www-authenticate')}`,
+      'anonymous / → 303 to the login page',
+      res.status === 303 && res.headers.get('location') === '/__dsh-proxy/login',
+      `status=${res.status} location=${res.headers.get('location')}`,
     )
 
-    // 2. anonymous /api → 401 with the Basic challenge
+    // 1b. the login page itself is served and hardened
+    res = await fetch(`${base}/__dsh-proxy/login`, { redirect: 'manual' })
+    const loginHtml = await res.text()
+    check(
+      'login page served with a credential form and hardened headers',
+      res.status === 200
+        && loginHtml.includes('type="password"')
+        && (res.headers.get('content-security-policy') ?? '').includes("default-src 'none'")
+        && res.headers.get('x-frame-options') === 'DENY',
+      `status=${res.status} csp=${res.headers.get('content-security-policy')}`,
+    )
+
+    // 2. anonymous /api → the login page too
     res = await fetch(`${base}/api/state`, { redirect: 'manual' })
-    check('anonymous /api → 401 Basic challenge', res.status === 401 && /^Basic realm=/.test(res.headers.get('www-authenticate') ?? ''), `status=${res.status}`)
+    check('anonymous /api → 303 to the login page', res.status === 303, `status=${res.status}`)
 
     // 2b. public static files (PWA manifest, favicon) need no auth
     res = await fetch(`${base}/manifest.webmanifest`, { redirect: 'manual' })
@@ -104,32 +129,75 @@ async function main() {
     res = await fetch(`${base}/favicon.svg`, { redirect: 'manual' })
     check('public favicon served without auth', res.status === 200, `status=${res.status}`)
 
-    // 3. wrong Basic credentials → 401
+    // 3. wrong Basic credentials → back to the login page (no dialog in session mode)
     res = await fetch(`${base}/`, { redirect: 'manual', headers: { authorization: `Basic ${Buffer.from(`${USER}:wrong`).toString('base64')}` } })
-    check('wrong Basic credentials → 401', res.status === 401, `status=${res.status}`)
+    check('wrong Basic credentials → 303 to the login page', res.status === 303, `status=${res.status}`)
 
-    // 4. with Basic credentials → real DSH index + polyfill injected
-    res = await fetch(`${base}/`, { headers: { authorization } })
-    const html = await res.text()
-    const polyfillAt = html.indexOf('randomUUID=function')
-    const moduleAt = html.indexOf('<script type="module"')
-    check('authenticated / serves the DSH app', res.status === 200 && html.includes('<div id="root">'), `status=${res.status}`)
-    check('randomUUID polyfill injected before the app script', polyfillAt !== -1 && polyfillAt < moduleAt, `polyfillAt=${polyfillAt} moduleAt=${moduleAt}`)
+    // 4. with Basic credentials the gate lets the request through to DSH: what
+    // comes back is DSH's own 401 (or a token redirect), never our login page.
+    res = await fetch(`${base}/`, { redirect: 'manual', headers: { authorization } })
+    check(
+      'Basic credentials pass the gate (upstream answers, not the login page)',
+      res.status !== 303 || res.headers.get('location') !== '/__dsh-proxy/login',
+      `status=${res.status} location=${res.headers.get('location')}`,
+    )
 
     // 5. static asset through the proxy
     res = await fetch(`${base}/favicon.svg`, { headers: { authorization } })
     check('favicon served through the proxy', res.status === 200 && (res.headers.get('content-type') ?? '').includes('svg'), `status=${res.status}`)
 
-    // 6. trust fence passes: GET /api/events.mux must reach the route (426 upgrade required), not 403
-    res = await fetch(`${base}/api/events.mux`, { headers: { authorization } })
-    check('/api/events.mux reaches the route (426, fence passed)', res.status === 426, `status=${res.status} (403 would mean the Host/Origin rewrite failed)`)
-
-    // 7. websocket with Basic credentials → 101
-    const open = await rawUpgrade(port, '/api/events.mux', {
-      Origin: origin,
-      Authorization: authorization,
+    // 5b. the real browser flow: log in through the login page, then complete
+    // DSH's own launch-token exchange so the upstream session cookie exists.
+    // (Basic alone passes OUR gate, but DSH itself still wants its own cookie.)
+    res = await fetch(`${base}/__dsh-proxy/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(USER)}&password=${encodeURIComponent(PASS)}`,
     })
-    check('WS handshake with Basic → 101', open.status === 101, `status=${open.status}`)
+    const proxyCookie = (res.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ')
+    check('login page issues a session cookie', res.status === 303 && proxyCookie.includes('session='), `status=${res.status} cookie=${proxyCookie.slice(0, 40)}`)
+
+    // DSH keeps its OWN browser session behind a per-process launch token that
+    // only the in-process host knows. With DSH_SMOKE_TOKEN we complete that
+    // exchange; without it the app-level checks below are SKIPPED (not failed),
+    // because the gate itself has already been proven above.
+    let upstreamCookie = ''
+    if (TOKEN !== '') {
+      const exchange = await fetch(`${base}/?token=${encodeURIComponent(TOKEN)}`, {
+        redirect: 'manual',
+        headers: { cookie: proxyCookie },
+      })
+      upstreamCookie = (exchange.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ')
+      check('DSH launch-token exchange completed', upstreamCookie !== '', `status=${exchange.status}`)
+    }
+    const cookies = [proxyCookie, upstreamCookie].filter((c) => c !== '').join('; ')
+
+    if (upstreamCookie === '') {
+      skip('DSH app index + polyfill injection', 'set DSH_SMOKE_TOKEN to exercise the full app flow')
+      skip('/api/events.mux trust-fence check', 'needs the DSH session cookie')
+      skip('WS handshake with credentials → 101', 'needs the DSH session cookie')
+    } else {
+      // 6. trust fence passes: GET /api/events.mux reaches the route, not 403
+      res = await fetch(`${base}/api/events.mux`, { headers: { authorization, cookie: cookies } })
+      check('/api/events.mux reaches the route (426, fence passed)', res.status === 426, `status=${res.status} (403 would mean the Host/Origin rewrite failed)`)
+
+      // 7. the real app index through the proxy, with the polyfill injected
+      res = await fetch(`${base}/`, { headers: { cookie: cookies } })
+      const appHtml = await res.text()
+      const polyfillAt = appHtml.indexOf('randomUUID=function')
+      const moduleAt = appHtml.indexOf('<script type="module"')
+      check('authenticated / serves the DSH app', res.status === 200 && appHtml.includes('<div id="root">'), `status=${res.status}`)
+      check('randomUUID polyfill injected before the app script', polyfillAt !== -1 && polyfillAt < moduleAt, `polyfillAt=${polyfillAt} moduleAt=${moduleAt}`)
+
+      // 8. websocket with the session cookie + Basic credentials → 101
+      const open = await rawUpgrade(port, '/api/events.mux', {
+        Origin: origin,
+        Authorization: authorization,
+        Cookie: cookies,
+      })
+      check('WS handshake with credentials → 101', open.status === 101, `status=${open.status}`)
+    }
 
     // 8. websocket without credentials → 401
     const denied = await rawUpgrade(port, '/api/events.mux', { Origin: origin })
@@ -140,7 +208,7 @@ async function main() {
 
   await pluginContractPhase()
 
-  console.log(`\nsmoke: ${passed} passed, ${failed} failed`)
+  console.log(`\nsmoke: ${passed} passed, ${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ''}`)
   process.exit(failed === 0 ? 0 : 1)
 }
 

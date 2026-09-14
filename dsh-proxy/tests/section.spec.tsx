@@ -12,17 +12,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsSection, type SettingsSectionProps } from '../src/client/SettingsSection.tsx'
 import { zh, type LanProxyKey } from '../src/client/locales.ts'
 import {
+  ENDPOINT_AUDIT,
+  ENDPOINT_AUTH,
+  ENDPOINT_AUTH_REVOKE,
+  ENDPOINT_SECURITY,
   ENDPOINT_START,
   ENDPOINT_STATUS,
   ENDPOINT_STOP,
   ENDPOINT_UPDATE,
+  type LanProxyAuthView,
   type LanProxyStatus,
 } from '../src/contract.ts'
 import type { LanProxyCall } from '../src/client/transport.ts'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = false
 
-const t = (key: LanProxyKey): string => zh[key] ?? key
+const t = (key: LanProxyKey, params?: Record<string, unknown>): string => {
+  const template = zh[key] ?? key
+  if (params === undefined) return template
+  return template.replace(/\{(\w+)\}/g, (_m, name: string) => String(params[name] ?? ''))
+}
+
+/** Default auth surface the security card sees in the section tests. */
+const AUTH_VIEW: LanProxyAuthView = {
+  sessions: [],
+  lockouts: [],
+  policy: { sessionTtlMs: 7 * 86400000, sessionIdleMs: 12 * 3600000, maxFailures: 5, lockoutMs: 900000 },
+  requireTls: false,
+  cleartextAuth: 'login',
+  loginEnabled: true,
+  loginPath: '/__dsh-proxy/login',
+  logoutPath: '/__dsh-proxy/logout',
+}
 
 const STATUS: LanProxyStatus = {
   listenHost: '0.0.0.0',
@@ -42,6 +63,8 @@ function makeCall(over: {
   status?: (endpoint: string, payload: unknown) => Promise<unknown>
   update?: (endpoint: string, payload: unknown) => Promise<unknown>
   control?: (endpoint: string, payload: unknown) => Promise<unknown>
+  auth?: (endpoint: string, payload: unknown) => Promise<unknown>
+  audit?: (endpoint: string, payload: unknown) => Promise<unknown>
 } = {}): { call: LanProxyCall; calls: Array<{ endpoint: string; payload: unknown }> } {
   const calls: Array<{ endpoint: string; payload: unknown }> = []
   const call = vi.fn((endpoint: string, payload: unknown) => {
@@ -50,6 +73,17 @@ function makeCall(over: {
     if (endpoint === ENDPOINT_UPDATE && over.update) return over.update(endpoint, payload)
     if ((endpoint === ENDPOINT_START || endpoint === ENDPOINT_STOP) && over.control) {
       return over.control(endpoint, payload)
+    }
+    // The security card reads these on mount; the default answer is an empty,
+    // gate-off surface so existing cases are unaffected by its presence.
+    if (endpoint === ENDPOINT_AUTH) {
+      return over.auth ? over.auth(endpoint, payload) : Promise.resolve({ ok: true, value: AUTH_VIEW })
+    }
+    if (endpoint === ENDPOINT_AUDIT) {
+      return over.audit ? over.audit(endpoint, payload) : Promise.resolve({ ok: true, value: [] })
+    }
+    if (endpoint === ENDPOINT_SECURITY || endpoint === ENDPOINT_AUTH_REVOKE) {
+      return Promise.resolve({ ok: true, value: { ok: true, requireTls: false, restartRequired: false, revoked: 1 } })
     }
     return Promise.resolve({ ok: true, value: STATUS })
   }) as unknown as LanProxyCall
@@ -155,7 +189,9 @@ describe('status card', () => {
     await flush()
     const text = mounted.container.textContent ?? ''
     expect(text).toContain(zh['status.authOffHint'])
-    expect(mounted.container.querySelector('.dsh_lanproxy_warn')).toBeNull()
+    // The security card renders its own warning class for the cleartext policy, so
+    // assert on the status warning's TEXT rather than the shared class name.
+    expect(text).not.toContain(zh['status.lanExposedHint'])
   })
 
   it('shows the unreachable banner when the status RPC fails', async () => {
