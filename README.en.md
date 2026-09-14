@@ -9,7 +9,8 @@ The DSH server deliberately refuses `--host 0.0.0.0` (it would expose remote cod
 ## Features
 
 - **Full HTTP + WebSocket forwarding** — real-time task state and log streams keep working.
-- **Native Basic Auth (off by default)** — the browser's own credential dialog; no custom login page, no session cookies. Username and password default to empty (open LAN access: anyone who can reach the port is in); setting **both** in the settings page turns password login on (including on WebSocket handshakes).
+- **A built-in login page for HTTPS** — behind a TLS reverse proxy the plugin serves its own login form; a login issues a session cookie (logout, expiry, and a revocable session list in settings) plus login throttling and an audit trail. A plain-HTTP LAN IP keeps the **native Basic dialog**, so both paths coexist.
+- **Native Basic Auth (off by default)** — the browser's own credential dialog where it still applies (plain-HTTP LAN). Username and password default to empty (open LAN access: anyone who can reach the port is in); setting **both** in the settings page turns password login on (including on WebSocket handshakes).
 - **The open state is stated loudly** — while the proxy listens on a network address without a password, the web UI raises a notice on every page load naming the exposed address and the consequence, startup logs a SECURITY WARNING, and the settings page flags it in red. The notice keeps no memory, so it cannot be dismissed away.
 - **Settings page** — DSH settings → "LAN Proxy": status lights, start/stop, and edits to the listen port, username, and password (persisted to `$DSH_HOME/dsh-proxy.json`).
 - **Automatic LAN login** — DSH's browser session needs a cookie minted from its per-process launch token, and the token URL `dsh web` prints is loopback-only. The plugin completes that exchange for the address you actually used, so the first LAN visit just works.
