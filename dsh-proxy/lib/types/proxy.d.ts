@@ -1,3 +1,4 @@
+import { AuthState, type AuditEntry } from './auth.ts';
 export interface LanProxyOptions {
     /** Interface the proxy binds (0.0.0.0 for LAN access). */
     listenHost: string;
@@ -24,6 +25,29 @@ export interface LanProxyOptions {
      * upstream 401 through unchanged.
      */
     authenticatedUrl?: (publicOrigin: string) => string | undefined;
+    /**
+     * Session store for the login page. When present, a request that arrived over
+     * TLS (or from a loopback browser) is gated by a session cookie and served the
+     * login form; a plain-HTTP LAN request keeps the native Basic Auth dialog, so
+     * the long-standing LAN workflow is unchanged.
+     */
+    auth?: AuthState;
+    /** Addresses whose `X-Forwarded-*` headers are believed (the TLS-terminating proxy in front). */
+    trustedProxyAddresses?: readonly string[];
+    /**
+     * Refuse cleartext altogether instead of authenticating it. Off by default:
+     * the LAN-over-HTTP deployment is a supported configuration.
+     */
+    requireTls?: boolean;
+    /**
+     * How an allowed cleartext visitor authenticates. Defaults to the login page so
+     * the gate is one mechanism everywhere; `basic` keeps the native dialog.
+     */
+    cleartextAuth?: 'login' | 'basic';
+    /** Heading/title of the login page. */
+    loginTitle?: string;
+    /** Sink for gate events the session store does not own (e.g. a refused cleartext request). */
+    audit?: (entry: AuditEntry) => void;
     /** Optional sink for human-readable lifecycle messages. */
     log?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
@@ -38,6 +62,10 @@ export interface LanProxyHandle {
         lan: string[];
     };
 }
+/** GET serves the form; POST submits credentials. */
+export declare const LOGIN_PATH = "/__dsh-proxy/login";
+/** Clears the session cookie and returns to the form. */
+export declare const LOGOUT_PATH = "/__dsh-proxy/logout";
 /** LAN IPv4 addresses the host currently has, as http URLs on `port`. */
 export declare function lanAddresses(port: number): string[];
 export declare function startLanProxy(options: LanProxyOptions): LanProxyHandle;

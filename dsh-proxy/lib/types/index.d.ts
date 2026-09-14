@@ -18,6 +18,8 @@ import z from '@deepseek-ai/schemastery';
 import { ProxyController } from './controller.ts';
 export { lanAddresses, startLanProxy } from './proxy.ts';
 export type { LanProxyHandle, LanProxyOptions } from './proxy.ts';
+export { AuthState } from './auth.ts';
+export { AuditTrail } from './audit.ts';
 /** Stable Cordis plugin name (the Loader entry and package name). */
 export declare const name = "@wenxingyu/dsh-proxy";
 /** Services required before load: the web server (upstream port source) and the Connection carrier. */
@@ -36,6 +38,16 @@ export interface Config {
     username: string;
     /** Login / Basic Auth password; password login is enabled only when both it and `username` are set. */
     password: string;
+    /**
+     * Addresses whose `X-Forwarded-*` headers are believed — the TLS-terminating
+     * reverse proxy in front of this listener. Loopback is always trusted.
+     */
+    trustedProxies: string[];
+    /**
+     * Refuse plain HTTP entirely instead of serving the native Basic Auth dialog
+     * there. Off by default: LAN-over-HTTP is a supported deployment.
+     */
+    requireTls: boolean;
 }
 /** Configuration schema; deployment-varying bounds stay tunable from cordis.yml. */
 export declare const Config: z<Schemastery.ObjectS<{
@@ -45,6 +57,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     upstreamPort: z<number, number>;
     username: z<string, string>;
     password: z<string, string>;
+    trustedProxies: z<string[], string[]>;
+    requireTls: z<boolean, boolean>;
 }>, Schemastery.ObjectT<{
     listenHost: z<string, string>;
     listenPort: z<number, number>;
@@ -52,6 +66,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     upstreamPort: z<number, number>;
     username: z<string, string>;
     password: z<string, string>;
+    trustedProxies: z<string[], string[]>;
+    requireTls: z<boolean, boolean>;
 }>>;
 /**
  * Build the handler mounted at {@link LAN_PROXY_PATH} on Connection's shared
@@ -66,7 +82,14 @@ export declare const Config: z<Schemastery.ObjectS<{
  * @param controller - the proxy controller this route drives.
  * @returns Fetch handler for the plugin's exact route.
  */
-export declare function createLanProxyRoute(controller: ProxyController): (request: Request) => Promise<Response>;
+export declare function createLanProxyRoute(controller: ProxyController, 
+/**
+ * Resolves the caller's own session token from a request (the proxy's login
+ * cookie), so "revoke all others" cannot log the caller out of the very page
+ * they are clicking from. Optional: without it, `all` still revokes every
+ * session the caller could otherwise not have addressed individually.
+ */
+currentSessionToken?: (request: Request) => string | undefined): (request: Request) => Promise<Response>;
 /**
  * Mount the proxy and the settings route as effects on this plugin's fiber:
  * unloading the plugin closes the listener, every upgraded socket, and the

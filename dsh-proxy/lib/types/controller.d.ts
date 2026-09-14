@@ -1,4 +1,6 @@
-import { type LanProxyStatus, type LanProxyUpdateResult } from './contract.ts';
+import { type AuthPolicy } from './auth.ts';
+import { type CleartextAuthMode } from './security.ts';
+import { type LanProxyAuditView, type LanProxyAuthView, type LanProxyStatus, type LanProxyUpdateResult } from './contract.ts';
 /** The fully-resolved runtime options of one proxy instance. */
 export interface EffectiveProxyOptions {
     listenHost: string;
@@ -19,6 +21,21 @@ export interface ProxyControllerOptions {
      * {@link LanProxyOptions.authenticatedUrl}). Absent when the host has none.
      */
     authenticatedUrl?: (publicOrigin: string) => string | undefined;
+    /**
+     * Path of the persisted audit trail. The login gate records failures and
+     * session lifecycle there; omit it to keep the trail in memory only.
+     */
+    auditFile?: string;
+    /** Session/throttle policy for the login gate (defaults to {@link DEFAULT_AUTH_POLICY}). */
+    authPolicy?: Partial<AuthPolicy>;
+    /** Addresses whose forwarded headers are believed (the TLS proxy in front). */
+    trustedProxyAddresses?: readonly string[];
+    /** Refuse cleartext instead of falling back to Basic Auth (default false = LAN-over-HTTP supported). */
+    requireTls?: boolean;
+    /** Path of the persisted transport policy (`requireTls`), so the switch survives a restart. */
+    securityFile?: string;
+    /** Login page title/heading. */
+    loginTitle?: string;
     /** Log sink (the plugin passes ctx.logger-based printer). */
     log: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
@@ -44,6 +61,14 @@ export declare class ProxyController {
     private readonly settings;
     private readonly log;
     private options;
+    /** Login-gate sessions; deliberately in-memory so a restart drops them. */
+    private readonly auth;
+    /** Durable audit trail (absent when no path was configured). */
+    private readonly audit;
+    /** Persisted transport policy (`requireTls`); absent when no path was configured. */
+    private readonly security;
+    /** Effective transport policy, kept in sync with the file. */
+    private securitySettings;
     constructor(opts: ProxyControllerOptions);
     /** Whether a persisted runtime override exists (drives the status flag). */
     private persisted;
@@ -54,6 +79,40 @@ export declare class ProxyController {
      * web app boot while callers still learn why the listener is down.
      */
     start(): Promise<StartOutcome>;
+    /**
+     * Effective transport policy: the persisted override wins, then the cordis
+     * config, then the compatible default (cleartext allowed).
+     */
+    private requireTls;
+    /** Authentication mode currently in force for allowed cleartext traffic. */
+    private cleartextAuth;
+    /** The authentication surface for the settings page. */
+    authView(currentToken?: string): LanProxyAuthView;
+    /** Recent audit entries, newest first (what an operator would want on screen). */
+    auditView(): LanProxyAuditView[];
+    /**
+     * Revoke one session, or every session except the caller's.
+     * @param payload - `{ id }` from the settings page; `all` keeps the caller.
+     * @param currentToken - the caller's own session token, so it is never dropped by `all`.
+     * @returns how many sessions were revoked.
+     */
+    revokeSessions(payload: unknown, currentToken?: string): {
+        revoked: number;
+    };
+    /**
+     * Persist the transport policy. A change takes effect on the next restart, so
+     * this reports whether a restart is needed instead of silently not applying it.
+     * @param payload - the requested `requireTls`.
+     */
+    updateSecurity(payload: unknown): {
+        ok: true;
+        requireTls: boolean;
+        cleartextAuth: CleartextAuthMode;
+        restartRequired: boolean;
+    } | {
+        ok: false;
+        message: string;
+    };
     /** Stop the proxy and every upgraded socket. */
     stop(): Promise<void>;
     /** Stop and start again with the current effective options (the "restart the forwarding service" verb). */

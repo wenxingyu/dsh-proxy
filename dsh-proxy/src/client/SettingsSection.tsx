@@ -23,6 +23,7 @@ import {
   type LanProxyUpdateResult,
 } from '../contract.ts'
 import type { LanProxyKey } from './locales.ts'
+import { SecurityCard } from './SecurityCard.tsx'
 import type { LanProxyCall } from './transport.ts'
 
 /** Injected business face: the caller for this plugin's own `/api` route. */
@@ -378,6 +379,8 @@ export function SettingsSection({ call, t }: SettingsSectionProps) {
           {error !== null ? <p className="dsh_lanproxy_error">{error}</p> : null}
         </div>
       </form>
+
+      <SecurityCard call={call} t={t} />
     </section>
   )
 }

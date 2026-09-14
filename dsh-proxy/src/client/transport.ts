@@ -7,7 +7,15 @@
  * JSON envelope and never throws at the caller: every transport failure comes
  * back as a rendered `LanProxyResult` failure, exactly like an endpoint error.
  */
-import { LAN_PROXY_PATH, type LanProxyRequest, type LanProxyResult } from '../contract.ts'
+import {
+  ENDPOINT_AUDIT,
+  ENDPOINT_AUTH,
+  LAN_PROXY_PATH,
+  type LanProxyAuditView,
+  type LanProxyAuthView,
+  type LanProxyRequest,
+  type LanProxyResult,
+} from '../contract.ts'
 
 /** Call one settings endpoint and resolve its result envelope. */
 export type LanProxyCall = <T>(endpoint: string, payload: unknown) => Promise<LanProxyResult<T>>
@@ -35,6 +43,18 @@ async function readEnvelope(response: Response): Promise<LanProxyResult<never> |
   } catch {
     return null
   }
+}
+
+/** Read the login/session surface the security card renders. */
+export async function fetchAuthView(call: LanProxyCall): Promise<LanProxyAuthView | null> {
+  const result = await call<LanProxyAuthView>(ENDPOINT_AUTH, {})
+  return result.ok ? (result.value as LanProxyAuthView) : null
+}
+
+/** Read the recent audit trail (newest first, as the host returns it). */
+export async function fetchAudit(call: LanProxyCall): Promise<LanProxyAuditView[]> {
+  const result = await call<LanProxyAuditView[]>(ENDPOINT_AUDIT, {})
+  return result.ok ? (result.value as LanProxyAuditView[]) : []
 }
 
 /** POST one endpoint to the host route and decode its result envelope. */

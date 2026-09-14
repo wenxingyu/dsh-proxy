@@ -35,6 +35,15 @@ import net from 'node:net'
 import os from 'node:os'
 import httpProxy from 'http-proxy'
 import { Authenticator } from './session.ts'
+import {
+  AuthState,
+  clearedSessionCookie,
+  readCookie,
+  sessionCookie,
+  type AuditEntry,
+} from './auth.ts'
+import { loginFailureMessage, renderLoginPage } from './loginpage.ts'
+import { isTrustedProxyPeer, resolveClientAddress, resolveGate, resolveSecureTransport } from './netaccess.ts'
 import { injectPolyfill, RANDOM_UUID_POLYFILL } from './polyfill.ts'
 import { isJavaScriptContentType, patchClientScript } from './clientpatch.ts'
 import { attachBodyTransform } from './compression.ts'
@@ -65,6 +74,29 @@ export interface LanProxyOptions {
    * upstream 401 through unchanged.
    */
   authenticatedUrl?: (publicOrigin: string) => string | undefined
+  /**
+   * Session store for the login page. When present, a request that arrived over
+   * TLS (or from a loopback browser) is gated by a session cookie and served the
+   * login form; a plain-HTTP LAN request keeps the native Basic Auth dialog, so
+   * the long-standing LAN workflow is unchanged.
+   */
+  auth?: AuthState
+  /** Addresses whose `X-Forwarded-*` headers are believed (the TLS-terminating proxy in front). */
+  trustedProxyAddresses?: readonly string[]
+  /**
+   * Refuse cleartext altogether instead of authenticating it. Off by default:
+   * the LAN-over-HTTP deployment is a supported configuration.
+   */
+  requireTls?: boolean
+  /**
+   * How an allowed cleartext visitor authenticates. Defaults to the login page so
+   * the gate is one mechanism everywhere; `basic` keeps the native dialog.
+   */
+  cleartextAuth?: 'login' | 'basic'
+  /** Heading/title of the login page. */
+  loginTitle?: string
+  /** Sink for gate events the session store does not own (e.g. a refused cleartext request). */
+  audit?: (entry: AuditEntry) => void
   /** Optional sink for human-readable lifecycle messages. */
   log?: (level: 'info' | 'warn' | 'error', message: string) => void
 }
@@ -80,6 +112,19 @@ export interface LanProxyHandle {
 
 /** Basic Auth realm presented to unauthenticated clients. */
 const AUTH_REALM = 'dsh-proxy'
+
+/**
+ * Reserved path prefix for the proxy's own authentication routes.
+ *
+ * Living inside the proxied origin (rather than a second port) is what lets the
+ * session cookie's `Path=/` scope cover the whole app; the prefix belongs to the
+ * proxy, so no upstream route is shadowed by it.
+ */
+const AUTH_PATH_PREFIX = '/__dsh-proxy'
+/** GET serves the form; POST submits credentials. */
+export const LOGIN_PATH = `${AUTH_PATH_PREFIX}/login`
+/** Clears the session cookie and returns to the form. */
+export const LOGOUT_PATH = `${AUTH_PATH_PREFIX}/logout`
 
 /**
  * Static files browsers fetch OUTSIDE the authenticated document context
@@ -242,29 +287,321 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
     res.end('401 Unauthorized')
   }
 
+  /**
+   * Resolve how this request must be gated: sessions over TLS/loopback,
+   * Basic Auth on a plain LAN (the compatible path), or a refusal when the
+   * operator opted into `requireTls`.
+   */
+  const gateFor = (req: http.IncomingMessage): ReturnType<typeof resolveGate> => {
+    const peerTrusted = isTrustedProxyPeer(req.socket.remoteAddress, {
+      addresses: new Set(options.trustedProxyAddresses ?? []),
+    })
+    const secure = resolveSecureTransport({
+      forwardedProto: req.headers['x-forwarded-proto'],
+      peerTrusted,
+      socketEncrypted: (req.socket as { encrypted?: boolean }).encrypted === true,
+    })
+    return resolveGate({
+      secure,
+      host: req.headers.host,
+      socketEncrypted: (req.socket as { encrypted?: boolean }).encrypted === true,
+      requireTls: options.requireTls === true,
+      cleartextAuth: options.cleartextAuth ?? 'login',
+    })
+  }
+
+  /**
+   * Whether the credential gate applies at all. An incomplete credential pair
+   * means "no password": the long-standing open behaviour, where the whole surface
+   * is reachable without a login — never a redirect to a form nobody can satisfy.
+   */
+  const gateEnforced = (): boolean => auth.enabled
+
+  /** The per-client key used for throttling and auditing. */
+  const clientAddressFor = (req: http.IncomingMessage): string => {
+    const peerTrusted = isTrustedProxyPeer(req.socket.remoteAddress, {
+      addresses: new Set(options.trustedProxyAddresses ?? []),
+    })
+    return resolveClientAddress({
+      forwardedFor: req.headers['x-forwarded-for'],
+      peerAddress: req.socket.remoteAddress,
+      peerTrusted,
+    })
+  }
+
+  /** Headers every login-page response carries: never cached, never a referrer. */
+  const loginPageHeaders = (contentType: string): Record<string, string> => ({
+    'content-type': contentType,
+    'cache-control': 'no-store, must-revalidate',
+    'referrer-policy': 'no-referrer',
+    // The page is self-contained (one inline style block, no script, no frames),
+    // so the policy can be maximally strict.
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+  })
+
+  /** Read at most `limit` bytes of a request body (a login form is tiny). */
+  const readFormBody = (req: http.IncomingMessage, limit = 8 * 1024): Promise<string> =>
+    new Promise((resolve) => {
+      let body = ''
+      let size = 0
+      req.setEncoding('utf8')
+      req.on('data', (chunk: string) => {
+        size += Buffer.byteLength(chunk)
+        if (size > limit) {
+          resolve(body)
+          req.destroy()
+          return
+        }
+        body += chunk
+      })
+      req.on('end', () => resolve(body))
+      req.on('error', () => resolve(body))
+    })
+
+  /**
+   * Same-origin check for state-changing plugin routes.
+   *
+   * The session cookie is already `SameSite=Strict`, which keeps a cross-site
+   * form from carrying it; this is the belt to that suspenders, because a
+   * same-site-but-different-port page would otherwise submit unnoticed.
+   *
+   * Two signals are used, in order of reliability:
+   * 1. `Sec-Fetch-Site`, which a browser computes itself and a page cannot
+   *    forge. `same-origin` is conclusive and `none` means a direct navigation.
+   *    This is what keeps the check CORRECT even when a proxy rewrites `Host`
+   *    (the browser's `Origin` then legitimately differs from what we see).
+   * 2. The `Origin`/`Host` comparison, for clients that do not send
+   *    `Sec-Fetch-Site` (curl, older browsers, non-browser clients).
+   *
+   * @returns a rejection reason, or null when the request may proceed.
+   */
+  const crossSiteReason = (req: http.IncomingMessage): string | null => {
+    const fetchSite = req.headers['sec-fetch-site']
+    if (typeof fetchSite === 'string') {
+      if (fetchSite === 'same-origin' || fetchSite === 'none') return null
+      if (fetchSite === 'same-site' || fetchSite === 'cross-site') {
+        return `浏览器报告来源为 ${fetchSite}（仅接受同源提交）`
+      }
+    }
+    const origin = req.headers.origin
+    if (origin === undefined) return null
+    // `Origin: null` is the browser saying "I have no origin to disclose" (a
+    // sandboxed/privacy-hardened context, some in-app browsers, or a redirect
+    // chain). It is NOT evidence of a cross-site request, and treating it as one
+    // broke a legitimate login. Absence of a positive cross-site signal is the
+    // rule here; the credential itself plus SameSite=Strict remain the real
+    // barrier against a login-CSRF, which is the only attack this check guards.
+    if (origin === 'null') return null
+    let host: string
+    try {
+      host = new URL(origin).host
+    } catch {
+      // A malformed, non-null Origin is the one case worth refusing: it is not
+      // something a well-behaved browser produces.
+      return `Origin 头无法解析：${origin}`
+    }
+    const expected = req.headers.host ?? ''
+    if (host !== expected) {
+      // State both values: a mismatch here is almost always a proxy rewriting
+      // Host, and the operator needs to see that rather than guess.
+      return `来源校验失败：Origin=${host} 与 Host=${expected} 不一致`
+    }
+    return null
+  }
+
+  /** Backwards-compatible boolean wrapper around {@link crossSiteReason}. */
+  const isCrossSite = (req: http.IncomingMessage): boolean => crossSiteReason(req) !== null
+
+  /** Plain-text refusal shown when the deployment requires TLS and got cleartext. */
+  const refuseCleartext = (res: http.ServerResponse): void => {
+    res.writeHead(403, {
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    })
+    res.end('403 Forbidden — this proxy requires HTTPS (configure requireTls after putting a TLS reverse proxy in front).')
+  }
+
+  /** Serve the login form, carrying an optional already-localized error. */
+  const serveLoginPage = (res: http.ServerResponse, gate: { secure: boolean }, error?: string): void => {
+    const html = renderLoginPage({
+      action: LOGIN_PATH,
+      secure: gate.secure,
+      ...(options.loginTitle === undefined ? {} : { title: options.loginTitle }),
+      ...(error === undefined ? {} : { error }),
+    })
+    res.writeHead(200, loginPageHeaders('text/html; charset=utf-8'))
+    res.end(html)
+  }
+
+  /**
+   * Handle the plugin's own authentication routes. They live under a reserved
+   * path inside the proxied origin so the session cookie's scope (Path=/) is the
+   * whole app, and are never forwarded upstream.
+   * @returns whether the request was answered here.
+   */
+  const handleAuthRoutes = async (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    pathname: string,
+    gate: ReturnType<typeof resolveGate>,
+  ): Promise<boolean> => {
+    const store = options.auth
+    if (store === undefined || gate.mode !== 'session' || !gateEnforced()) return false
+
+    if (pathname === LOGIN_PATH) {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        serveLoginPage(res, gate)
+        return true
+      }
+      if (req.method !== 'POST') {
+        res.writeHead(405, loginPageHeaders('text/plain; charset=utf-8')).end('405 Method Not Allowed')
+        return true
+      }
+      const crossSite = crossSiteReason(req)
+      if (crossSite !== null) {
+        log('warn', `dsh-proxy: rejected a login POST — ${crossSite}`)
+        serveLoginPage(res, gate, `请求来源校验失败：${crossSite}。请从登录页直接登录。`)
+        return true
+      }
+      if (req.headers.origin === undefined || req.headers.origin === 'null') {
+        // Allowed, but recorded: knowing which clients withhold the origin is how
+        // an operator distinguishes an in-app browser from an attack.
+        options.audit?.({
+          at: Date.now(),
+          event: 'login-origin-withheld',
+          source: clientAddressFor(req),
+          detail: `sec-fetch-site=${String(req.headers['sec-fetch-site'] ?? 'none')} origin=${String(req.headers.origin ?? 'absent')}`,
+        })
+      }
+      const body = await readFormBody(req)
+      const form = new URLSearchParams(body)
+      const result = store.login({
+        username: form.get('username') ?? '',
+        password: form.get('password') ?? '',
+        source: clientAddressFor(req),
+        userAgent: req.headers['user-agent'] ?? '',
+        expected: { username, password },
+      })
+      if (!result.ok) {
+        serveLoginPage(res, gate, loginFailureMessage(result.reason, result.retryAfterMs))
+        return true
+      }
+      // 303 so a refresh re-issues the GET instead of re-posting credentials.
+      res.writeHead(303, {
+        ...loginPageHeaders('text/plain; charset=utf-8'),
+        location: '/',
+        'set-cookie': sessionCookie(
+          result.session.token,
+          Math.floor(store.authPolicy.sessionTtlMs / 1000),
+          gate.cookieName,
+        ),
+      })
+      res.end()
+      return true
+    }
+
+    if (pathname === LOGOUT_PATH) {
+      // A cross-site GET here would only log the victim out, so it is allowed on
+      // both verbs; a cross-site POST is refused for symmetry with login.
+      if (req.method === 'POST' && isCrossSite(req)) {
+        res.writeHead(403, loginPageHeaders('text/plain; charset=utf-8')).end('403 Forbidden')
+        return true
+      }
+      store.logout(readCookie(req.headers.cookie, gate.cookieName))
+      res.writeHead(303, {
+        ...loginPageHeaders('text/plain; charset=utf-8'),
+        location: LOGIN_PATH,
+        'set-cookie': clearedSessionCookie(gate.cookieName),
+      })
+      res.end()
+      return true
+    }
+
+    return false
+  }
+
   const server = http.createServer((req, res) => {
-    const pathname = new URL(req.url ?? '/', 'http://proxy.local').pathname
+    const url = new URL(req.url ?? '/', 'http://proxy.local')
+    const pathname = url.pathname
     if (req.headers.host !== undefined) publicOrigins.set(req, req.headers.host)
-    // Public static files (PWA manifest, favicon): fetched without
-    // credentials by the browser, so they bypass the auth gate.
-    if (PUBLIC_PATHS.has(pathname)) {
+    const gate = gateFor(req)
+
+    void handleAuthRoutes(req, res, pathname, gate).then((handled) => {
+      if (handled) return
+      // Public static files (PWA manifest, favicon): fetched without
+      // credentials by the browser, so they bypass the auth gate.
+      if (PUBLIC_PATHS.has(pathname)) {
+        alignOrigin(req)
+        proxy.web(req, res)
+        return
+      }
+
+      if (gate.mode === 'plaintext-blocked' && gateEnforced()) {
+        options.audit?.({ at: Date.now(), event: 'insecure-transport-refused', source: clientAddressFor(req), detail: pathname })
+        refuseCleartext(res)
+        return
+      }
+
+      // No password configured: no gate. This is the documented open state the
+      // settings page warns about; it must not turn into an unreachable login form.
+      if (!gateEnforced()) {
+        alignOrigin(req)
+        proxy.web(req, res)
+        return
+      }
+
+      // A session gate accepts a valid cookie; the Basic path (a plain LAN) keeps
+      // the native dialog, and BOTH accept Basic credentials so an existing
+      // configured client keeps working after an upgrade.
+      const session = gate.mode === 'session'
+        ? options.auth?.authenticate(readCookie(req.headers.cookie, gate.cookieName))
+        : null
+      if (session !== null && session !== undefined) {
+        alignOrigin(req)
+        proxy.web(req, res)
+        return
+      }
+      if (!auth.isAuthenticated(req.headers.authorization)) {
+        if (gate.mode === 'session') {
+          // No browser dialog here: send the visitor to the form they can use.
+          res.writeHead(303, {
+            'cache-control': 'no-store',
+            location: LOGIN_PATH,
+          })
+          res.end()
+          return
+        }
+        challenge(res)
+        return
+      }
       alignOrigin(req)
       proxy.web(req, res)
-      return
-    }
-    if (!auth.isAuthenticated(req.headers.authorization)) {
-      challenge(res)
-      return
-    }
-    alignOrigin(req)
-    proxy.web(req, res)
+    })
   })
 
   const upgradedSockets = new Set<net.Socket>()
   server.on('upgrade', (req, socket, head) => {
-    if (!auth.isAuthenticated(req.headers.authorization)) {
-      socket.end(`HTTP/1.1 401 Unauthorized\r\nwww-authenticate: Basic realm="${AUTH_REALM}"\r\nConnection: close\r\n\r\n`)
+    const gate = gateFor(req)
+    // A WebSocket cannot be redirected to a login page, so it is admitted only by
+    // a valid session cookie (TLS/loopback) or Basic credentials (plain LAN).
+    if (!gateEnforced()) {
+      upgradedSockets.add(socket as net.Socket)
+      ;(socket as net.Socket).once('close', () => upgradedSockets.delete(socket as net.Socket))
+      alignOrigin(req)
+      proxy.ws(req, socket as Duplex, head)
       return
+    }
+    const session = gate.mode === 'session'
+      ? options.auth?.authenticate(readCookie(req.headers.cookie, gate.cookieName))
+      : null
+    if (session === null || session === undefined) {
+      if (!auth.isAuthenticated(req.headers.authorization)) {
+        socket.end(`HTTP/1.1 401 Unauthorized\r\nwww-authenticate: Basic realm="${AUTH_REALM}"\r\nConnection: close\r\n\r\n`)
+        return
+      }
     }
     upgradedSockets.add(socket as net.Socket)
     ;(socket as net.Socket).once('close', () => upgradedSockets.delete(socket as net.Socket))

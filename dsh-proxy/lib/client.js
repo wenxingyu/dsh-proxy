@@ -27,7 +27,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/client/SettingsSection.tsx
-var import_react = require("react");
+var import_react2 = require("react");
 
 // src/contract.ts
 var LAN_PROXY_PATH = "/api/dsh-proxy";
@@ -35,62 +35,331 @@ var ENDPOINT_STATUS = "status";
 var ENDPOINT_UPDATE = "update";
 var ENDPOINT_START = "start";
 var ENDPOINT_STOP = "stop";
+var ENDPOINT_AUTH = "auth";
+var ENDPOINT_AUDIT = "audit";
+var ENDPOINT_AUTH_REVOKE = "auth-revoke";
+var ENDPOINT_SECURITY = "security";
 
-// src/client/SettingsSection.tsx
+// src/client/SecurityCard.tsx
+var import_react = require("react");
+
+// src/client/transport.ts
+var TRANSPORT_FAILURE = "transport";
+function carrierFailure(message, details = {}) {
+  return { ok: false, error: { code: TRANSPORT_FAILURE, message, details } };
+}
+async function readEnvelope(response) {
+  try {
+    const body = await response.json();
+    if (typeof body === "object" && body !== null && typeof body.ok === "boolean") {
+      return body;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+async function fetchAuthView(call) {
+  const result = await call(ENDPOINT_AUTH, {});
+  return result.ok ? result.value : null;
+}
+async function fetchAudit(call) {
+  const result = await call(ENDPOINT_AUDIT, {});
+  return result.ok ? result.value : [];
+}
+var callLanProxy = async (endpoint, payload) => {
+  const body = { endpoint, payload: payload ?? {} };
+  let response;
+  try {
+    response = await fetch(LAN_PROXY_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    return carrierFailure(error instanceof Error ? error.message : String(error));
+  }
+  const envelope = await readEnvelope(response);
+  if (envelope !== null) return envelope;
+  if (!response.ok) {
+    const detail = response.statusText.length > 0 ? `${response.status} ${response.statusText}` : String(response.status);
+    return carrierFailure(detail, { status: response.status });
+  }
+  return carrierFailure("response body is not a result envelope");
+};
+
+// src/client/SecurityCard.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
+function minutes(ms) {
+  return Math.max(1, Math.ceil(ms / 6e4));
+}
+function stamp(at) {
+  try {
+    return new Date(at).toLocaleString();
+  } catch {
+    return String(at);
+  }
+}
+function SecurityCard({ call, t }) {
+  const [auth, setAuth] = (0, import_react.useState)(null);
+  const [audit, setAudit] = (0, import_react.useState)([]);
+  const [loading, setLoading] = (0, import_react.useState)(true);
+  const [error, setError] = (0, import_react.useState)(null);
+  const [message, setMessage] = (0, import_react.useState)(null);
+  const [busy, setBusy] = (0, import_react.useState)(false);
+  const load = (0, import_react.useCallback)(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [nextAuth, nextAudit] = await Promise.all([fetchAuthView(call), fetchAudit(call)]);
+      setAuth(nextAuth);
+      setAudit(nextAudit);
+      if (nextAuth === null) setError(t("sec.failed"));
+    } catch (err) {
+      setError(`${t("sec.failed")}\uFF1A${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [call, t]);
+  (0, import_react.useEffect)(() => {
+    void load();
+  }, [load]);
+  const revoke = (0, import_react.useCallback)(async (id) => {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await call(ENDPOINT_AUTH_REVOKE, { id });
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setMessage(t("sec.revoked"));
+      await load();
+    } catch (err) {
+      setError(`${t("sec.failed")}\uFF1A${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [call, load, t]);
+  const patchSecurity = (0, import_react.useCallback)(async (patch) => {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await call(ENDPOINT_SECURITY, patch);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      const restartRequired = result.value?.restartRequired === true;
+      setMessage(restartRequired ? `${t("sec.saved")} \xB7 ${t("sec.restartHint")}` : t("sec.saved"));
+      await load();
+    } catch (err) {
+      setError(`${t("sec.failed")}\uFF1A${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [call, load, t]);
+  if (loading && auth === null) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("sec.loading") });
+  }
+  const others = auth?.sessions.filter((session) => !session.current) ?? [];
+  const policy = auth?.policy;
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_card", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_cardHeader", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("sec.title") }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_controls", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          type: "button",
+          className: "dsh_lanproxy_button",
+          disabled: busy,
+          onClick: () => {
+            void load();
+          },
+          children: t("sec.refresh")
+        }
+      ) })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("sec.subtitle") }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(StatusRow, { label: t("sec.loginEnabled"), value: auth?.loginEnabled === true ? t("sec.loginOn") : t("sec.loginOff") }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      StatusRow,
+      {
+        label: t("sec.requireTls"),
+        value: auth?.requireTls === true ? t("sec.requireTlsOn") : t("sec.requireTlsOff")
+      }
+    ),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        className: "dsh_lanproxy_button",
+        disabled: busy || auth === null,
+        onClick: () => {
+          void patchSecurity({ requireTls: !(auth?.requireTls === true) });
+        },
+        children: auth?.requireTls === true ? t("sec.disableRequireTls") : t("sec.enableRequireTls")
+      }
+    ) }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      StatusRow,
+      {
+        label: t("sec.cleartextAuth"),
+        value: auth?.cleartextAuth === "basic" ? t("sec.cleartextBasic") : t("sec.cleartextLogin")
+      }
+    ),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        className: "dsh_lanproxy_button",
+        disabled: busy || auth === null,
+        onClick: () => {
+          void patchSecurity({ cleartextAuth: auth?.cleartextAuth === "basic" ? "login" : "basic" });
+        },
+        children: auth?.cleartextAuth === "basic" ? t("sec.useCleartextLogin") : t("sec.useCleartextBasic")
+      }
+    ) }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: auth?.cleartextAuth === "basic" ? "dsh_lanproxy_hint" : "dsh_lanproxy_warn", children: auth?.cleartextAuth === "basic" ? t("sec.cleartextBasicHint") : t("sec.cleartextLoginHint") }),
+    policy !== void 0 && policy.maxFailures !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("sec.policy", {
+      ttl: Math.round(policy.sessionTtlMs / 864e5),
+      idle: Math.round(policy.sessionIdleMs / 36e5),
+      max: policy.maxFailures,
+      lockout: minutes(policy.lockoutMs)
+    }) }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("sec.sessions") }),
+    auth !== null && auth.sessions.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", { className: "dsh_lanproxy_table", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: t("sec.source") }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: t("sec.createdAt") }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: t("sec.lastSeen") }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", {})
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: auth.sessions.map((session) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", { children: [
+          session.source,
+          session.current ? ` \xB7 ${t("sec.current")}` : ""
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: stamp(session.createdAt) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: stamp(session.lastSeenAt) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            className: "dsh_lanproxy_button dsh_lanproxy_buttonSmall",
+            disabled: busy,
+            onClick: () => {
+              void revoke(session.id);
+            },
+            children: t("sec.revoke")
+          }
+        ) })
+      ] }, session.id)) })
+    ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("sec.noSessions") }),
+    others.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        className: "dsh_lanproxy_button dsh_lanproxy_buttonStop",
+        disabled: busy,
+        onClick: () => {
+          void revoke("all");
+        },
+        children: t("sec.revokeAll")
+      }
+    ) }) : null,
+    auth !== null && auth.lockouts.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("sec.lockouts") }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { className: "dsh_lanproxy_list", children: auth.lockouts.map((lock) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: lock.source }),
+        " ",
+        t("sec.lockoutRow", { failures: lock.failures, minutes: minutes(lock.retryAfterMs) })
+      ] }, lock.source)) })
+    ] }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("sec.audit", { count: audit.length }) }),
+    audit.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", { className: "dsh_lanproxy_table", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: t("sec.createdAt") }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: t("sec.source") }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "event" })
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: audit.map((entry, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: stamp(entry.at) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: entry.source }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", { children: [
+          entry.event,
+          entry.detail !== void 0 ? ` \xB7 ${entry.detail}` : ""
+        ] })
+      ] }, `${entry.at}-${index}`)) })
+    ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("sec.noAudit") }),
+    message !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_message", children: message }) : null,
+    error !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_error", children: error }) : null
+  ] });
+}
 function StatusRow(props) {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_row", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_rowLabel", children: props.label }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_rowValue", children: props.value })
   ] });
 }
+
+// src/client/SettingsSection.tsx
+var import_jsx_runtime2 = require("react/jsx-runtime");
+function StatusRow2(props) {
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_row", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "dsh_lanproxy_rowLabel", children: props.label }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "dsh_lanproxy_rowValue", children: props.value })
+  ] });
+}
 function PortStatus(props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "dsh_lanproxy_portStatus", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: props.ok ? "dsh_lanproxy_dot dsh_lanproxy_dotOn" : "dsh_lanproxy_dot dsh_lanproxy_dotOff" }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_portValue", children: props.port }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: props.ok ? "dsh_lanproxy_statusText dsh_lanproxy_statusTextOn" : "dsh_lanproxy_statusText dsh_lanproxy_statusTextOff", children: props.ok ? props.okText : props.failText })
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "dsh_lanproxy_portStatus", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: props.ok ? "dsh_lanproxy_dot dsh_lanproxy_dotOn" : "dsh_lanproxy_dot dsh_lanproxy_dotOff" }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "dsh_lanproxy_portValue", children: props.port }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: props.ok ? "dsh_lanproxy_statusText dsh_lanproxy_statusTextOn" : "dsh_lanproxy_statusText dsh_lanproxy_statusTextOff", children: props.ok ? props.okText : props.failText })
   ] });
 }
 function EyeIcon() {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", { cx: "12", cy: "12", r: "3" })
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: "M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("circle", { cx: "12", cy: "12", r: "3" })
   ] });
 }
 function EyeOffIcon() {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M9.88 9.88a3 3 0 1 0 4.24 4.24" }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("line", { x1: "2", x2: "22", y1: "2", y2: "22" })
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: "M9.88 9.88a3 3 0 1 0 4.24 4.24" }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: "M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: "M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("line", { x1: "2", x2: "22", y1: "2", y2: "22" })
   ] });
 }
 function SettingsSection({ call, t }) {
-  const [phase, setPhase] = (0, import_react.useState)("loading");
-  const phaseRef = (0, import_react.useRef)("loading");
-  const [status, setStatus] = (0, import_react.useState)(null);
-  const [statusError, setStatusError] = (0, import_react.useState)(null);
-  const [saving, setSaving] = (0, import_react.useState)(false);
-  const [controlling, setControlling] = (0, import_react.useState)(false);
-  const [error, setError] = (0, import_react.useState)(null);
-  const [message, setMessage] = (0, import_react.useState)(null);
-  const [controlError, setControlError] = (0, import_react.useState)(null);
-  const [controlMessage, setControlMessage] = (0, import_react.useState)(null);
-  const [showPassword, setShowPassword] = (0, import_react.useState)(false);
-  const [listenPort, setListenPort] = (0, import_react.useState)("");
-  const [username, setUsername] = (0, import_react.useState)("");
-  const [password, setPassword] = (0, import_react.useState)("");
-  const formSeededRef = (0, import_react.useRef)(false);
-  const applyPhase = (0, import_react.useCallback)((next) => {
+  const [phase, setPhase] = (0, import_react2.useState)("loading");
+  const phaseRef = (0, import_react2.useRef)("loading");
+  const [status, setStatus] = (0, import_react2.useState)(null);
+  const [statusError, setStatusError] = (0, import_react2.useState)(null);
+  const [saving, setSaving] = (0, import_react2.useState)(false);
+  const [controlling, setControlling] = (0, import_react2.useState)(false);
+  const [error, setError] = (0, import_react2.useState)(null);
+  const [message, setMessage] = (0, import_react2.useState)(null);
+  const [controlError, setControlError] = (0, import_react2.useState)(null);
+  const [controlMessage, setControlMessage] = (0, import_react2.useState)(null);
+  const [showPassword, setShowPassword] = (0, import_react2.useState)(false);
+  const [listenPort, setListenPort] = (0, import_react2.useState)("");
+  const [username, setUsername] = (0, import_react2.useState)("");
+  const [password, setPassword] = (0, import_react2.useState)("");
+  const formSeededRef = (0, import_react2.useRef)(false);
+  const applyPhase = (0, import_react2.useCallback)((next) => {
     phaseRef.current = next;
     setPhase(next);
   }, []);
-  const applyStatusToForm = (0, import_react.useCallback)((next) => {
+  const applyStatusToForm = (0, import_react2.useCallback)((next) => {
     setListenPort(String(next.listenPort));
     setUsername(next.username);
     setPassword(next.password ?? "");
   }, []);
-  const loadStatus = (0, import_react.useCallback)(async () => {
+  const loadStatus = (0, import_react2.useCallback)(async () => {
     applyPhase("loading");
     setStatusError(null);
     try {
@@ -113,14 +382,14 @@ function SettingsSection({ call, t }) {
       applyPhase("error");
     }
   }, [call, applyPhase, applyStatusToForm]);
-  (0, import_react.useEffect)(() => {
+  (0, import_react2.useEffect)(() => {
     void loadStatus();
     const timer = window.setTimeout(() => {
       if (phaseRef.current === "error") void loadStatus();
     }, 2e3);
     return () => window.clearTimeout(timer);
   }, [loadStatus]);
-  const runControl = (0, import_react.useCallback)(async (action) => {
+  const runControl = (0, import_react2.useCallback)(async (action) => {
     setControlling(true);
     setControlError(null);
     setControlMessage(null);
@@ -188,44 +457,44 @@ function SettingsSection({ call, t }) {
       setSaving(false);
     }
   };
-  const authBadge = status !== null && status.lanExposed ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOff", children: t("status.lanOpen") }) : status !== null && status.authEnabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOn", children: t("status.authOn") }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOff", children: t("status.authOff") });
-  const securityWarning = status !== null && status.lanExposed ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_warn", role: "alert", children: t("status.lanExposedHint") }) : status !== null && !status.authEnabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("status.authOffHint") }) : null;
-  const statusCard = phase === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: t("status.loading") }) : phase === "error" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_statusError", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_error", children: t("status.unreachable") }),
-    statusError !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: statusError }) : null,
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "dsh_lanproxy_button", onClick: () => {
+  const authBadge = status !== null && status.lanExposed ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOff", children: t("status.lanOpen") }) : status !== null && status.authEnabled ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOn", children: t("status.authOn") }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "dsh_lanproxy_badge dsh_lanproxy_badgeOff", children: t("status.authOff") });
+  const securityWarning = status !== null && status.lanExposed ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_warn", role: "alert", children: t("status.lanExposedHint") }) : status !== null && !status.authEnabled ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_hint", children: t("status.authOffHint") }) : null;
+  const statusCard = phase === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_hint", children: t("status.loading") }) : phase === "error" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_statusError", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_error", children: t("status.unreachable") }),
+    statusError !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_hint", children: statusError }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "dsh_lanproxy_button", onClick: () => {
       void loadStatus();
     }, children: t("status.retry") })
-  ] }) : status !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      StatusRow,
+  ] }) : status !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      StatusRow2,
       {
         label: t("status.proxyPort"),
-        value: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PortStatus, { port: `${status.listenHost}:${status.listenPort}`, ok: status.proxyListening, okText: t("status.proxyRunning"), failText: t("status.proxyStopped") })
+        value: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PortStatus, { port: `${status.listenHost}:${status.listenPort}`, ok: status.proxyListening, okText: t("status.proxyRunning"), failText: t("status.proxyStopped") })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      StatusRow,
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      StatusRow2,
       {
         label: t("status.targetPort"),
-        value: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PortStatus, { port: `${status.upstreamHost}:${status.upstreamPort}`, ok: status.upstreamReachable, okText: t("status.targetReachable"), failText: t("status.targetUnreachable") })
+        value: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PortStatus, { port: `${status.upstreamHost}:${status.upstreamPort}`, ok: status.upstreamReachable, okText: t("status.targetReachable"), failText: t("status.targetUnreachable") })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(StatusRow, { label: t("status.username"), value: status.username }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(StatusRow, { label: t("status.auth"), value: authBadge }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(StatusRow2, { label: t("status.username"), value: status.username }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(StatusRow2, { label: t("status.auth"), value: authBadge }),
     securityWarning,
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_hint", children: status.persisted ? t("status.persistedOn") : t("status.persistedOff") })
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_hint", children: status.persisted ? t("status.persistedOn") : t("status.persistedOff") })
   ] }) : null;
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "dsh_lanproxy_section", "aria-labelledby": "dsh-lanproxy-settings-title", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_heading", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { id: "dsh-lanproxy-settings-title", className: "dsh_lanproxy_title", children: t("nav") }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_subtitle", children: t("form.subtitle") })
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "dsh_lanproxy_section", "aria-labelledby": "dsh-lanproxy-settings-title", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_heading", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h2", { id: "dsh-lanproxy-settings-title", className: "dsh_lanproxy_title", children: t("nav") }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_subtitle", children: t("form.subtitle") })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_card", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_cardHeader", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("status.title") }),
-        phase === "ok" && status !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_controls", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_card", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_cardHeader", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("status.title") }),
+        phase === "ok" && status !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_controls", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -237,7 +506,7 @@ function SettingsSection({ call, t }) {
               children: t("control.start")
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -252,16 +521,16 @@ function SettingsSection({ call, t }) {
         ] }) : null
       ] }),
       statusCard,
-      controlMessage !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_message", children: controlMessage }) : null,
-      controlError !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_error", children: controlError }) : null
+      controlMessage !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_message", children: controlMessage }) : null,
+      controlError !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_error", children: controlError }) : null
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { className: "dsh_lanproxy_card dsh_lanproxy_form", onSubmit: (event) => {
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("form", { className: "dsh_lanproxy_card dsh_lanproxy_form", onSubmit: (event) => {
       void submit(event);
     }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("form.title") }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_field", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "dsh_lanproxy_fieldLabel", htmlFor: "dsh-lanproxy-listen-port", children: t("form.listenPort") }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "dsh_lanproxy_cardTitle", children: t("form.title") }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_field", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("label", { className: "dsh_lanproxy_fieldLabel", htmlFor: "dsh-lanproxy-listen-port", children: t("form.listenPort") }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "input",
           {
             id: "dsh-lanproxy-listen-port",
@@ -278,9 +547,9 @@ function SettingsSection({ call, t }) {
           }
         )
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_field", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "dsh_lanproxy_fieldLabel", htmlFor: "dsh-lanproxy-username", children: t("form.username") }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_field", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("label", { className: "dsh_lanproxy_fieldLabel", htmlFor: "dsh-lanproxy-username", children: t("form.username") }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "input",
           {
             id: "dsh-lanproxy-username",
@@ -295,10 +564,10 @@ function SettingsSection({ call, t }) {
           }
         )
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_field", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "dsh_lanproxy_fieldLabel", htmlFor: "dsh-lanproxy-password", children: t("form.password") }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_passwordWrap", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_field", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("label", { className: "dsh_lanproxy_fieldLabel", htmlFor: "dsh-lanproxy-password", children: t("form.password") }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_passwordWrap", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "input",
             {
               id: "dsh-lanproxy-password",
@@ -312,7 +581,7 @@ function SettingsSection({ call, t }) {
               }
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -322,70 +591,32 @@ function SettingsSection({ call, t }) {
               onClick: () => {
                 setShowPassword((visible) => !visible);
               },
-              children: showPassword ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EyeOffIcon, {}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EyeIcon, {})
+              children: showPassword ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(EyeOffIcon, {}) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(EyeIcon, {})
             }
           )
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "dsh_lanproxy_actions", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "submit", className: "dsh_lanproxy_button", disabled: saving, children: saving ? t("form.saving") : t("form.save") }),
-        message !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_message", children: message }) : null,
-        error !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "dsh_lanproxy_error", children: error }) : null
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_actions", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "submit", className: "dsh_lanproxy_button", disabled: saving, children: saving ? t("form.saving") : t("form.save") }),
+        message !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_message", children: message }) : null,
+        error !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_error", children: error }) : null
       ] })
-    ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(SecurityCard, { call, t })
   ] });
 }
 
 // src/client/LanExposureNotice.tsx
-var import_react2 = require("react");
-
-// src/client/transport.ts
-var TRANSPORT_FAILURE = "transport";
-function carrierFailure(message, details = {}) {
-  return { ok: false, error: { code: TRANSPORT_FAILURE, message, details } };
-}
-async function readEnvelope(response) {
-  try {
-    const body = await response.json();
-    if (typeof body === "object" && body !== null && typeof body.ok === "boolean") {
-      return body;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-var callLanProxy = async (endpoint, payload) => {
-  const body = { endpoint, payload: payload ?? {} };
-  let response;
-  try {
-    response = await fetch(LAN_PROXY_PATH, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body)
-    });
-  } catch (error) {
-    return carrierFailure(error instanceof Error ? error.message : String(error));
-  }
-  const envelope = await readEnvelope(response);
-  if (envelope !== null) return envelope;
-  if (!response.ok) {
-    const detail = response.statusText.length > 0 ? `${response.status} ${response.statusText}` : String(response.status);
-    return carrierFailure(detail, { status: response.status });
-  }
-  return carrierFailure("response body is not a result envelope");
-};
-
-// src/client/LanExposureNotice.tsx
-var import_jsx_runtime2 = require("react/jsx-runtime");
+var import_react3 = require("react");
+var import_jsx_runtime3 = require("react/jsx-runtime");
 function decideExposure(status) {
   if (status === null || !status.lanExposed) return { kind: "silent" };
   return { kind: "show" };
 }
 var checkedThisPageLoad = false;
 function LanExposureNotice({ t }) {
-  const [exposed, setExposed] = (0, import_react2.useState)(null);
-  (0, import_react2.useEffect)(() => {
+  const [exposed, setExposed] = (0, import_react3.useState)(null);
+  (0, import_react3.useEffect)(() => {
     if (checkedThisPageLoad) return;
     checkedThisPageLoad = true;
     void (async () => {
@@ -396,11 +627,11 @@ function LanExposureNotice({ t }) {
     })();
   }, []);
   if (exposed === null) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "dsh_lanproxy_notice", role: "alert", "aria-live": "assertive", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_noticeTitle", children: t("notice.title") }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_noticeBody", children: t("notice.body", { address: `${exposed.listenHost}:${exposed.listenPort}` }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "dsh_lanproxy_noticeHint", children: t("notice.hint") }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "dsh_lanproxy_notice", role: "alert", "aria-live": "assertive", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { className: "dsh_lanproxy_noticeTitle", children: t("notice.title") }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { className: "dsh_lanproxy_noticeBody", children: t("notice.body", { address: `${exposed.listenHost}:${exposed.listenPort}` }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { className: "dsh_lanproxy_noticeHint", children: t("notice.hint") }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
       "button",
       {
         type: "button",
@@ -441,6 +672,42 @@ var zh = {
   "notice.body": "{address} \u6B63\u5728\u5BF9\u5C40\u57DF\u7F51\u76D1\u542C\uFF0C\u4E14\u6CA1\u6709\u8BBE\u7F6E\u5BC6\u7801\u767B\u5F55\uFF1A\u5C40\u57DF\u7F51\u5185\u4EFB\u4F55\u4EBA\u90FD\u80FD\u76F4\u63A5\u6253\u5F00 DSH\uFF0C\u5305\u62EC\u8BBE\u7F6E\u3001\u51ED\u636E\u7B49\u7279\u6743\u63A5\u53E3\u3002",
   "notice.hint": "\u4FEE\u590D\u65B9\u5F0F\uFF1A\u6253\u5F00 DSH \u8BBE\u7F6E \u2192\u300C\u5C40\u57DF\u7F51\u4EE3\u7406\u300D\uFF0C\u540C\u65F6\u586B\u5199\u7528\u6237\u540D\u548C\u5BC6\u7801\u5E76\u300C\u5E94\u7528\u300D\uFF1B\u82E5\u53EA\u9700\u672C\u673A\u4F7F\u7528\uFF0C\u53EF\u5728 profile \u7684 cordis.patch.yml \u4E2D\u628A listenHost \u6539\u4E3A 127.0.0.1\u3002",
   "notice.dismiss": "\u6211\u77E5\u9053\u4E86",
+  "sec.title": "\u767B\u5F55\u4E0E\u5B89\u5168",
+  "sec.subtitle": "\u767B\u5F55\u9875\u53D1\u4F1A\u8BDD Cookie\uFF08\u53EF\u901A\u8FC7\u53CD\u4EE3 HTTPS \u751F\u6548\uFF09\uFF1B\u5C40\u57DF\u7F51\u660E\u6587\u8BBF\u95EE\u4ECD\u4F7F\u7528\u6D4F\u89C8\u5668 Basic \u8BA4\u8BC1\u3002",
+  "sec.loading": "\u52A0\u8F7D\u4E2D\u2026",
+  "sec.loginEnabled": "\u5BC6\u7801\u767B\u5F55",
+  "sec.loginOn": "\u5DF2\u542F\u7528\uFF08\u767B\u5F55\u9875 / Basic\uFF09",
+  "sec.loginOff": "\u672A\u8BBE\u7F6E\uFF08\u65E0\u95E8\u7981\uFF09",
+  "sec.requireTls": "\u5F3A\u5236 HTTPS",
+  "sec.requireTlsOn": "\u5DF2\u5F00\u542F\uFF1A\u660E\u6587\u8BF7\u6C42\u4E00\u5F8B\u62D2\u7EDD",
+  "sec.requireTlsOff": "\u672A\u5F00\u542F\uFF1A\u660E\u6587\u6309\u4E0B\u9762\u7684\u65B9\u5F0F\u8BA4\u8BC1",
+  "sec.cleartextAuth": "\u660E\u6587\u8BBF\u95EE\u7684\u8BA4\u8BC1\u65B9\u5F0F",
+  "sec.cleartextLogin": "\u767B\u5F55\u9875\uFF08\u9ED8\u8BA4\uFF0C\u7EDF\u4E00\uFF09",
+  "sec.cleartextBasic": "\u6D4F\u89C8\u5668 Basic \u5F39\u7A97",
+  "sec.useCleartextLogin": "\u660E\u6587\u4E5F\u7528\u767B\u5F55\u9875",
+  "sec.useCleartextBasic": "\u660E\u6587\u6539\u7528 Basic \u5F39\u7A97",
+  "sec.cleartextLoginHint": "\u660E\u6587\u4E0B\u4F1A\u8BDD Cookie \u65E0\u6CD5\u5E26 Secure/__Host-\uFF0C\u8F83 TLS \u4E0B\u66F4\u5F31\uFF08\u540C\u7F51\u6BB5\u53EF\u80FD\u88AB\u4F2A\u9020\u6216\u55C5\u63A2\uFF09\uFF1B\u5F3A\u70C8\u5EFA\u8BAE\u653E\u5230\u53CD\u4EE3 TLS \u4E4B\u540E\u3002",
+  "sec.cleartextBasicHint": "\u660E\u6587\u8BF7\u6C42\u4F7F\u7528\u6D4F\u89C8\u5668\u539F\u751F Basic \u5F39\u7A97\uFF0C\u5BC6\u7801\u968F\u6BCF\u4E2A\u8BF7\u6C42\u53D1\u9001\uFF1B\u65E0\u6CD5\u767B\u51FA\u6216\u8E22\u51FA\u4F1A\u8BDD\u3002",
+  "sec.enableRequireTls": "\u5F00\u542F\u5F3A\u5236 HTTPS",
+  "sec.disableRequireTls": "\u5173\u95ED\u5F3A\u5236 HTTPS",
+  "sec.restartHint": "\u8BE5\u5F00\u5173\u6539\u52A8\u540E\u9700\u91CD\u542F dsh web \u624D\u4F1A\u751F\u6548\u3002",
+  "sec.saved": "\u5DF2\u4FDD\u5B58",
+  "sec.sessions": "\u6D3B\u52A8\u4F1A\u8BDD",
+  "sec.noSessions": "\u5F53\u524D\u6CA1\u6709\u6D3B\u52A8\u4F1A\u8BDD\uFF08\u672A\u8D70\u767B\u5F55\u9875\u65F6\u4E3A\u6B63\u5E38\u73B0\u8C61\uFF09\u3002",
+  "sec.current": "\u5F53\u524D",
+  "sec.createdAt": "\u767B\u5F55\u65F6\u95F4",
+  "sec.lastSeen": "\u6700\u540E\u6D3B\u52A8",
+  "sec.source": "\u6765\u6E90",
+  "sec.revoke": "\u8E22\u51FA",
+  "sec.revokeAll": "\u8E22\u51FA\u5176\u4ED6\u6240\u6709\u4F1A\u8BDD",
+  "sec.revoked": "\u5DF2\u8E22\u51FA",
+  "sec.lockouts": "\u6B63\u5728\u9501\u5B9A\u7684\u6765\u6E90",
+  "sec.lockoutRow": "\u5931\u8D25 {failures} \u6B21\uFF0C\u7EA6 {minutes} \u5206\u949F\u540E\u89E3\u9501",
+  "sec.audit": "\u767B\u5F55\u5BA1\u8BA1\uFF08\u6700\u8FD1 {count} \u6761\uFF09",
+  "sec.noAudit": "\u6682\u65E0\u5BA1\u8BA1\u8BB0\u5F55\u3002",
+  "sec.refresh": "\u5237\u65B0",
+  "sec.failed": "\u64CD\u4F5C\u5931\u8D25",
+  "sec.policy": "\u7B56\u7565\uFF1A\u4F1A\u8BDD\u6700\u957F {ttl} \u5929 / \u7A7A\u95F2 {idle} \u5C0F\u65F6\uFF1B\u8FDE\u7EED\u5931\u8D25 {max} \u6B21\u9501\u5B9A {lockout} \u5206\u949F\u3002",
   "control.start": "\u542F\u52A8",
   "control.stop": "\u505C\u6B62",
   "control.started": "\u4EE3\u7406\u670D\u52A1\u5DF2\u542F\u52A8",
@@ -493,6 +760,42 @@ var en = {
   "notice.body": "{address} is listening on the network with password login off: anyone on the LAN can open DSH directly, including its privileged settings and credentials RPC.",
   "notice.hint": `To fix it, open DSH settings \u2192 "LAN Proxy", set BOTH a username and a password, and Apply. If this machine is all you need, set listenHost to 127.0.0.1 in the profile's cordis.patch.yml.`,
   "notice.dismiss": "Got it",
+  "sec.title": "Login & security",
+  "sec.subtitle": "The login page issues a session cookie (effective behind a TLS reverse proxy); plain-HTTP LAN access keeps the browser Basic dialog.",
+  "sec.loading": "Loading\u2026",
+  "sec.loginEnabled": "Password login",
+  "sec.loginOn": "Enabled (login page / Basic)",
+  "sec.loginOff": "Not configured (no gate)",
+  "sec.requireTls": "Require HTTPS",
+  "sec.requireTlsOn": "On: cleartext requests are refused",
+  "sec.requireTlsOff": "Off: cleartext authenticates as configured below",
+  "sec.cleartextAuth": "Cleartext authentication",
+  "sec.cleartextLogin": "Login page (default, unified)",
+  "sec.cleartextBasic": "Browser Basic dialog",
+  "sec.useCleartextLogin": "Use the login page for cleartext",
+  "sec.useCleartextBasic": "Use the Basic dialog for cleartext",
+  "sec.cleartextLoginHint": "On cleartext the session cookie cannot carry Secure/__Host-, so it is weaker than under TLS (a same-LAN attacker could plant or sniff it). Put a TLS reverse proxy in front.",
+  "sec.cleartextBasicHint": "Cleartext requests use the browser native Basic dialog: the password rides every request and there is no logout or session revocation.",
+  "sec.enableRequireTls": "Turn on Require HTTPS",
+  "sec.disableRequireTls": "Turn off Require HTTPS",
+  "sec.restartHint": "This switch takes effect after restarting dsh web.",
+  "sec.saved": "Saved",
+  "sec.sessions": "Active sessions",
+  "sec.noSessions": "No active sessions (normal while the login page is unused).",
+  "sec.current": "current",
+  "sec.createdAt": "Signed in",
+  "sec.lastSeen": "Last seen",
+  "sec.source": "Source",
+  "sec.revoke": "Revoke",
+  "sec.revokeAll": "Revoke all other sessions",
+  "sec.revoked": "Revoked",
+  "sec.lockouts": "Locked-out sources",
+  "sec.lockoutRow": "{failures} failures, unlocks in about {minutes} min",
+  "sec.audit": "Login audit (latest {count})",
+  "sec.noAudit": "No audit entries yet.",
+  "sec.refresh": "Refresh",
+  "sec.failed": "Action failed",
+  "sec.policy": "Policy: session max {ttl} days / idle {idle} h; {max} consecutive failures lock a source for {lockout} min.",
   "control.start": "Start",
   "control.stop": "Stop",
   "control.started": "Proxy service started",
@@ -779,6 +1082,44 @@ var cssText = `
 .dsh_lanproxy_buttonStop:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* Session/audit tables in the security card: dense, scrollable, and legible on
+   both themes (cell text uses the theme label, borders the theme border token). */
+.dsh_lanproxy_table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  display: block;
+  max-height: 260px;
+  overflow: auto;
+}
+.dsh_lanproxy_table th,
+.dsh_lanproxy_table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #30363d);
+  text-align: left;
+  white-space: nowrap;
+}
+.dsh_lanproxy_table th {
+  color: var(--dsw-alias-label-tertiary, #8b949e);
+  font-weight: 500;
+}
+.dsh_lanproxy_buttonSmall {
+  padding: 2px 10px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.dsh_lanproxy_list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.dsh_lanproxy_list code {
+  font-family: var(--ds-font-family-code, monospace);
 }
 .dsh_lanproxy_message {
   margin: 0;

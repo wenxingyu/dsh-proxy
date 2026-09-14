@@ -21,7 +21,12 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { ProxyController } from './controller.ts'
+import { SESSION_COOKIE, readCookie } from './auth.ts'
 import {
+  ENDPOINT_AUDIT,
+  ENDPOINT_AUTH,
+  ENDPOINT_AUTH_REVOKE,
+  ENDPOINT_SECURITY,
   ENDPOINT_START,
   ENDPOINT_STATUS,
   ENDPOINT_STOP,
@@ -36,6 +41,8 @@ import {
 // bundled artifact the profile loads.
 export { lanAddresses, startLanProxy } from './proxy.ts'
 export type { LanProxyHandle, LanProxyOptions } from './proxy.ts'
+export { AuthState } from './auth.ts'
+export { AuditTrail } from './audit.ts'
 
 /** Stable Cordis plugin name (the Loader entry and package name). */
 export const name = '@wenxingyu/dsh-proxy'
@@ -57,6 +64,16 @@ export interface Config {
   username: string
   /** Login / Basic Auth password; password login is enabled only when both it and `username` are set. */
   password: string
+  /**
+   * Addresses whose `X-Forwarded-*` headers are believed — the TLS-terminating
+   * reverse proxy in front of this listener. Loopback is always trusted.
+   */
+  trustedProxies: string[]
+  /**
+   * Refuse plain HTTP entirely instead of serving the native Basic Auth dialog
+   * there. Off by default: LAN-over-HTTP is a supported deployment.
+   */
+  requireTls: boolean
 }
 
 /** Configuration schema; deployment-varying bounds stay tunable from cordis.yml. */
@@ -67,6 +84,8 @@ export const Config = z.object({
   upstreamPort: z.natural().max(65535).default(0),
   username: z.string().default(''),
   password: z.string().default(''),
+  trustedProxies: z.array(z.string()).default([]),
+  requireTls: z.boolean().default(false),
 })
 
 /** One endpoint failure in the shared result envelope. */
@@ -88,8 +107,21 @@ function failure(message: string): LanProxyResult<never> {
  * @param controller - the proxy controller this route drives.
  * @returns Fetch handler for the plugin's exact route.
  */
-export function createLanProxyRoute(controller: ProxyController): (request: Request) => Promise<Response> {
-  const dispatch = async (endpoint: string, payload: unknown): Promise<LanProxyResult<unknown>> => {
+export function createLanProxyRoute(
+  controller: ProxyController,
+  /**
+   * Resolves the caller's own session token from a request (the proxy's login
+   * cookie), so "revoke all others" cannot log the caller out of the very page
+   * they are clicking from. Optional: without it, `all` still revokes every
+   * session the caller could otherwise not have addressed individually.
+   */
+  currentSessionToken?: (request: Request) => string | undefined,
+): (request: Request) => Promise<Response> {
+  const dispatch = async (
+    endpoint: string,
+    payload: unknown,
+    currentToken: string | undefined,
+  ): Promise<LanProxyResult<unknown>> => {
     if (endpoint === ENDPOINT_STATUS) {
       return { ok: true, value: await controller.refreshStatus() }
     }
@@ -113,6 +145,20 @@ export function createLanProxyRoute(controller: ProxyController): (request: Requ
       if (outcome.ok) return { ok: true, value: outcome.result }
       return failure(outcome.message)
     }
+    if (endpoint === ENDPOINT_AUTH) {
+      return { ok: true, value: controller.authView(currentToken) }
+    }
+    if (endpoint === ENDPOINT_AUDIT) {
+      return { ok: true, value: controller.auditView() }
+    }
+    if (endpoint === ENDPOINT_AUTH_REVOKE) {
+      return { ok: true, value: controller.revokeSessions(payload, currentToken) }
+    }
+    if (endpoint === ENDPOINT_SECURITY) {
+      const outcome = controller.updateSecurity(payload)
+      if (outcome.ok) return { ok: true, value: outcome }
+      return failure(outcome.message)
+    }
     return failure(`unknown endpoint ${JSON.stringify(endpoint)}`)
   }
 
@@ -126,7 +172,11 @@ export function createLanProxyRoute(controller: ProxyController): (request: Requ
     if (typeof body?.endpoint !== 'string' || body.endpoint.length === 0) {
       return Response.json(failure('body has no endpoint'), { status: 400 })
     }
-    const result = await dispatch(body.endpoint, body.payload)
+    const result = await dispatch(
+      body.endpoint,
+      body.payload,
+      currentSessionToken === undefined ? undefined : currentSessionToken(request),
+    )
     return Response.json(result)
   }
 }
@@ -153,6 +203,11 @@ export function apply(ctx: Context, config?: Config): void {
       password: resolved.password,
     },
     settingsFile: dshHomePath('dsh-proxy.json'),
+    auditFile: dshHomePath('dsh-proxy-audit.jsonl'),
+    securityFile: dshHomePath('dsh-proxy-security.json'),
+    trustedProxyAddresses: resolved.trustedProxies,
+    requireTls: resolved.requireTls,
+    loginTitle: 'DSH 局域网代理',
     // DSH mints its browser-session cookie only through the tokenized URL it
     // prints at startup, which points at loopback. Rebuild that URL for the
     // authority the browser actually used so a LAN visitor's first index
@@ -182,7 +237,10 @@ export function apply(ctx: Context, config?: Config): void {
         path: LAN_PROXY_PATH,
         methods: ['POST'],
         requestBody: 'buffered',
-        fetch: createLanProxyRoute(controller),
+        // The caller's own session cookie (when the page came through the proxy's
+        // login gate) identifies which session must survive a "revoke others".
+        fetch: createLanProxyRoute(controller, (request) =>
+          readCookie(request.headers.get('cookie') ?? undefined, SESSION_COOKIE)),
       }),
     'dsh-proxy.settings-route',
   )

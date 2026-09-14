@@ -269,6 +269,44 @@ export const cssText = `
   opacity: 0.5;
   cursor: default;
 }
+/* Session/audit tables in the security card: dense, scrollable, and legible on
+   both themes (cell text uses the theme label, borders the theme border token). */
+.dsh_lanproxy_table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  display: block;
+  max-height: 260px;
+  overflow: auto;
+}
+.dsh_lanproxy_table th,
+.dsh_lanproxy_table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #30363d);
+  text-align: left;
+  white-space: nowrap;
+}
+.dsh_lanproxy_table th {
+  color: var(--dsw-alias-label-tertiary, #8b949e);
+  font-weight: 500;
+}
+.dsh_lanproxy_buttonSmall {
+  padding: 2px 10px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.dsh_lanproxy_list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--dsw-alias-label-primary, #e6edf3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.dsh_lanproxy_list code {
+  font-family: var(--ds-font-family-code, monospace);
+}
 .dsh_lanproxy_message {
   margin: 0;
   color: var(--dsw-alias-state-success-primary, #3fb950);

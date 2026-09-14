@@ -20,6 +20,14 @@ export declare const ENDPOINT_UPDATE = "update";
 export declare const ENDPOINT_START = "start";
 /** Endpoint: stop the forwarding service (the response is answered before the listener closes). */
 export declare const ENDPOINT_STOP = "stop";
+/** Endpoint: list live login sessions, the current lockouts, and the security policy. */
+export declare const ENDPOINT_AUTH = "auth";
+/** Endpoint: read the recent audit trail. */
+export declare const ENDPOINT_AUDIT = "audit";
+/** Endpoint: revoke one session, or every session except the caller's. */
+export declare const ENDPOINT_AUTH_REVOKE = "auth-revoke";
+/** Endpoint: persist the transport policy (`requireTls`). */
+export declare const ENDPOINT_SECURITY = "security";
 /** Request body the settings section POSTs to {@link LAN_PROXY_PATH}. */
 export interface LanProxyRequest {
     /** Channel-owned endpoint name, e.g. `status`. */
@@ -82,6 +90,8 @@ export interface LanProxyStatus {
      * the listener itself is exactly as configured.
      */
     lanExposed: boolean;
+    /** Number of live login sessions (0 in the open, password-free state). */
+    authSessionCount: number;
     /** Whether a persisted runtime override exists on top of the cordis config. */
     persisted: boolean;
 }
@@ -105,6 +115,84 @@ export interface LanProxyStatus {
  * @returns true when the surface is open to the network.
  */
 export declare function isLanExposed(listenHost: string, proxyListening: boolean, authEnabled: boolean): boolean;
+/** One live login session as the settings page renders it (never the raw token). */
+export interface LanProxySessionView {
+    /** Short non-secret id used to address the session for revocation. */
+    id: string;
+    /** Creation time (ms epoch). */
+    createdAt: number;
+    /** Last time it was seen (ms epoch). */
+    lastSeenAt: number;
+    /** Remote address it was created from. */
+    source: string;
+    /** User-Agent at login (display only). */
+    userAgent: string;
+    /** Whether this is the session making the current request. */
+    current: boolean;
+}
+/** A source currently locked out by the login throttle. */
+export interface LanProxyLockoutView {
+    /** Per-client key (remote address). */
+    source: string;
+    /** Consecutive failures that tripped the lock. */
+    failures: number;
+    /** How long until the lock lifts (ms). */
+    retryAfterMs: number;
+}
+/** The authentication surface the settings page shows. */
+export interface LanProxyAuthView {
+    /** Live sessions, most recently used first. */
+    sessions: LanProxySessionView[];
+    /** Sources locked out right now (a brute-force in progress). */
+    lockouts: LanProxyLockoutView[];
+    /** Effective policy, so the UI can state the real numbers. */
+    policy: {
+        /** Absolute session lifetime (ms). */
+        sessionTtlMs: number;
+        /** Idle timeout (ms). */
+        sessionIdleMs: number;
+        /** Failures per source before a lockout. */
+        maxFailures: number;
+        /** Lockout duration (ms). */
+        lockoutMs: number;
+    };
+    /** Whether cleartext is refused outright. */
+    requireTls: boolean;
+    /** How an allowed cleartext visitor authenticates: the login page, or the native Basic dialog. */
+    cleartextAuth: 'login' | 'basic';
+    /** Whether the login form is reachable at all (password login on). */
+    loginEnabled: boolean;
+    /** Reserved path of the login form. */
+    loginPath: string;
+    /** Reserved path that logs the current session out. */
+    logoutPath: string;
+}
+/** One audit line as the settings page renders it. */
+export interface LanProxyAuditView {
+    /** When it happened (ms epoch). */
+    at: number;
+    /** Event name from the auth core. */
+    event: string;
+    /** Source the event is attributed to. */
+    source: string;
+    /** Optional detail (never a credential). */
+    detail?: string;
+}
+/** Request payload for {@link ENDPOINT_AUTH_REVOKE}. */
+export interface LanProxyRevokePayload {
+    /** Session id to revoke, or `all` to revoke every session except the caller's. */
+    id: string;
+}
+/** Request payload for {@link ENDPOINT_SECURITY}; omitted fields are unchanged. */
+export interface LanProxySecurityPayload {
+    /** New value for the cleartext refusal policy. */
+    requireTls?: boolean;
+    /**
+     * New value for how cleartext traffic authenticates. `login` is the default and
+     * unifies the gate; `basic` restores the native dialog for that traffic.
+     */
+    cleartextAuth?: 'login' | 'basic';
+}
 /** Settings-section patch: only fields present are changed; omitted fields keep their values. */
 export interface LanProxyUpdatePayload {
     /** New proxy listen port (1–65535, must differ from the default service port). */

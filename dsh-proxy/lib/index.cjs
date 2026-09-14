@@ -1814,6 +1814,8 @@ var require_http_proxy3 = __commonJS({
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
+  AuditTrail: () => AuditTrail,
+  AuthState: () => AuthState,
   Config: () => Config,
   apply: () => apply,
   createLanProxyRoute: () => createLanProxyRoute,
@@ -2674,6 +2676,380 @@ var Authenticator = class {
   }
 };
 
+// src/auth.ts
+var import_node_crypto2 = require("node:crypto");
+var DEFAULT_AUTH_POLICY = {
+  sessionTtlMs: 7 * 24 * 60 * 60 * 1e3,
+  sessionIdleMs: 12 * 60 * 60 * 1e3,
+  maxFailures: 5,
+  lockoutMs: 15 * 60 * 1e3,
+  failureDelayMs: 250
+};
+function sessionIdOf(token) {
+  return Buffer.from(token).toString("base64url").slice(0, 12);
+}
+function safeEqual2(a, b) {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ba.length === bb.length && (0, import_node_crypto2.timingSafeEqual)(ba, bb);
+}
+function verifyCredentials(candidate, expected) {
+  const userOk = safeEqual2(candidate.username, expected.username);
+  const passOk = safeEqual2(candidate.password, expected.password);
+  return userOk && passOk;
+}
+var AuthState = class {
+  sessions = /* @__PURE__ */ new Map();
+  failures = /* @__PURE__ */ new Map();
+  policy;
+  now;
+  auditSink;
+  constructor(options = {}) {
+    this.policy = { ...DEFAULT_AUTH_POLICY, ...options.policy };
+    this.now = options.now ?? (() => Date.now());
+    this.auditSink = options.audit ?? (() => {
+    });
+  }
+  /** The effective policy (the settings UI reports the relevant knobs). */
+  get authPolicy() {
+    return { ...this.policy };
+  }
+  /** Append one audit entry and hand it to the sink. */
+  audit(entry) {
+    this.auditSink(entry);
+  }
+  /** Drop expired sessions; called opportunistically on every check. */
+  sweep(now) {
+    for (const [token, session] of this.sessions) {
+      const absoluteExpired = now - session.createdAt >= this.policy.sessionTtlMs;
+      const idleExpired = now - session.lastSeenAt >= this.policy.sessionIdleMs;
+      if (absoluteExpired || idleExpired) this.sessions.delete(token);
+    }
+  }
+  /**
+   * Whether one source is currently locked out.
+   * @param source - the per-client key (remote address).
+   */
+  lockedFor(source) {
+    const record = this.failures.get(source);
+    if (record === void 0) return { locked: false, retryAfterMs: 0 };
+    const now = this.now();
+    if (record.lockedUntil > now) return { locked: true, retryAfterMs: record.lockedUntil - now };
+    if (record.failures >= this.policy.maxFailures) this.failures.delete(source);
+    return { locked: false, retryAfterMs: 0 };
+  }
+  /**
+   * Attempt a login.
+   *
+   * The failure path is uniform: a wrong username, a wrong password and a
+   * disabled login all produce the same result, and the lockout counter is keyed
+   * by source rather than by username so it cannot be used to enumerate accounts.
+   *
+   * @param input - candidate credentials plus the request's provenance.
+   * @returns the new session, a lockout notice, or a plain failure.
+   */
+  login(input) {
+    const now = this.now();
+    const lock = this.lockedFor(input.source);
+    if (lock.locked) {
+      this.audit({ at: now, event: "login-throttled", source: input.source, detail: "locked out" });
+      return { ok: false, reason: "locked", retryAfterMs: lock.retryAfterMs };
+    }
+    const enabled = input.expected.username !== "" && input.expected.password !== "";
+    if (!enabled || !verifyCredentials(
+      { username: input.username, password: input.password },
+      input.expected
+    )) {
+      const record = this.failures.get(input.source) ?? { failures: 0, lockedUntil: 0 };
+      record.failures += 1;
+      if (record.failures >= this.policy.maxFailures) {
+        record.lockedUntil = now + this.policy.lockoutMs;
+        this.audit({ at: now, event: "locked-out", source: input.source, detail: `${record.failures} failures` });
+      }
+      this.failures.set(input.source, record);
+      this.audit({ at: now, event: "login-failed", source: input.source });
+      return {
+        ok: false,
+        reason: enabled ? "invalid" : "disabled",
+        retryAfterMs: record.lockedUntil > now ? record.lockedUntil - now : 0
+      };
+    }
+    this.failures.delete(input.source);
+    const session = {
+      token: (0, import_node_crypto2.randomBytes)(32).toString("base64url"),
+      createdAt: now,
+      lastSeenAt: now,
+      source: input.source,
+      userAgent: (input.userAgent ?? "").slice(0, 200)
+    };
+    this.sessions.set(session.token, session);
+    this.audit({ at: now, event: "login", source: input.source });
+    return { ok: true, session };
+  }
+  /**
+   * Validate a session cookie and refresh its idle timer.
+   * @param token - the cookie value, when present.
+   * @returns the live session, or null when there is none.
+   */
+  authenticate(token) {
+    if (token === void 0 || token === "") return null;
+    const now = this.now();
+    this.sweep(now);
+    const session = this.sessions.get(token);
+    if (session === void 0) return null;
+    session.lastSeenAt = now;
+    return session;
+  }
+  /** Every live session, projected for the settings UI (optionally marking the caller's). */
+  listSessions(currentToken) {
+    const now = this.now();
+    this.sweep(now);
+    const currentId = currentToken === void 0 ? null : sessionIdOf(currentToken);
+    return [...this.sessions.values()].sort((a, b) => b.lastSeenAt - a.lastSeenAt).map((session) => ({
+      id: sessionIdOf(session.token),
+      createdAt: session.createdAt,
+      lastSeenAt: session.lastSeenAt,
+      source: session.source,
+      userAgent: session.userAgent,
+      current: currentId !== null && sessionIdOf(session.token) === currentId
+    }));
+  }
+  /**
+   * Revoke one session by its public id.
+   * @param id - the id from {@link listSessions}.
+   * @returns whether a session was revoked.
+   */
+  revokeSession(id) {
+    for (const [token, session] of this.sessions) {
+      if (sessionIdOf(token) === id) {
+        this.sessions.delete(token);
+        this.audit({ at: this.now(), event: "session-revoked", source: session.source, detail: id });
+        return true;
+      }
+    }
+    return false;
+  }
+  /** Revoke every session except the caller's (or all of them). */
+  revokeAllSessions(keepToken) {
+    const now = this.now();
+    let revoked = 0;
+    for (const [token, session] of this.sessions) {
+      if (keepToken !== void 0 && token === keepToken) continue;
+      this.sessions.delete(token);
+      revoked += 1;
+      this.audit({ at: now, event: "logout-all", source: session.source });
+    }
+    return revoked;
+  }
+  /**
+   * End the caller's own session.
+   * @param token - the session cookie value.
+   */
+  logout(token) {
+    if (token === void 0) return;
+    const session = this.sessions.get(token);
+    if (session === void 0) return;
+    this.sessions.delete(token);
+    this.audit({ at: this.now(), event: "logout", source: session.source });
+  }
+  /**
+   * Sources that are locked out right now, newest lock first.
+   *
+   * Exposed so an operator can see a brute-force attempt in progress and, in
+   * particular, tell whether it is one noisy device or many — the audit trail
+   * answers "what happened", this answers "what is happening".
+   */
+  lockedSources() {
+    const now = this.now();
+    const out = [];
+    for (const [source, record] of this.failures) {
+      if (record.lockedUntil <= now) continue;
+      out.push({ source, failures: record.failures, retryAfterMs: record.lockedUntil - now });
+    }
+    return out.sort((a, b) => b.retryAfterMs - a.retryAfterMs);
+  }
+  /** Number of live sessions (used by tests and the status surface). */
+  get sessionCount() {
+    this.sweep(this.now());
+    return this.sessions.size;
+  }
+};
+var SESSION_COOKIE = "__Host-dsh_proxy_session";
+function sessionCookie(token, maxAgeSeconds, name2 = SESSION_COOKIE) {
+  const secure = name2 === SESSION_COOKIE ? "; Secure" : "";
+  return `${name2}=${token}; Path=/; HttpOnly${secure}; SameSite=Strict; Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`;
+}
+function clearedSessionCookie(name2 = SESSION_COOKIE) {
+  const secure = name2 === SESSION_COOKIE ? "; Secure" : "";
+  return `${name2}=; Path=/; HttpOnly${secure}; SameSite=Strict; Max-Age=0`;
+}
+function readCookie(header, name2) {
+  if (header === void 0) return void 0;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== name2) continue;
+    return part.slice(eq + 1).trim();
+  }
+  return void 0;
+}
+
+// src/loginpage.ts
+function escapeHtml(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function renderLoginPage(options) {
+  const title = escapeHtml(options.title ?? "DSH \u5C40\u57DF\u7F51\u4EE3\u7406");
+  const action = escapeHtml(options.action);
+  const error = options.error === void 0 || options.error === "" ? "" : `<p class="error" role="alert">${escapeHtml(options.error)}</p>`;
+  const insecure = options.secure ? "" : '<p class="warn" role="alert">\u5F53\u524D\u8FDE\u63A5\u672A\u52A0\u5BC6\uFF08HTTP\uFF09\uFF1A\u5BC6\u7801\u4F1A\u4EE5\u660E\u6587\u7ECF\u8FC7\u7F51\u7EDC\uFF0C\u8BF7\u8BA9\u53CD\u5411\u4EE3\u7406\u542F\u7528 HTTPS \u540E\u518D\u767B\u5F55\u3002</p>';
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>${title}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; display: grid; place-items: center;
+  background: #0f1115; color: #e6edf3;
+  font: 14px/22px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+main { width: min(360px, calc(100vw - 32px)); padding: 24px; border: 1px solid #30363d; border-radius: 12px; background: #161b22; }
+h1 { margin: 0 0 4px; font-size: 18px; line-height: 26px; }
+p.sub { margin: 0 0 16px; color: #8b949e; font-size: 12px; line-height: 18px; }
+label { display: block; margin: 0 0 4px; color: #c9d1d9; font-size: 13px; }
+input {
+  width: 100%; margin: 0 0 12px; padding: 8px 10px;
+  border: 1px solid #30363d; border-radius: 8px; background: #0d1117; color: #e6edf3;
+  font: inherit;
+}
+input:focus-visible { outline: 2px solid #2f81f7; outline-offset: 1px; }
+button {
+  width: 100%; padding: 8px 14px; border: 1px solid #2f81f7; border-radius: 8px;
+  background: #2f81f7; color: #fff; font: inherit; font-weight: 500; cursor: pointer;
+}
+button:hover { background: #388bfd; border-color: #388bfd; }
+p.error { margin: 0 0 12px; padding: 8px 10px; border-left: 3px solid #f85149; border-radius: 4px; background: rgb(248 81 73 / 12%); color: #ff7b72; font-size: 13px; }
+p.warn { margin: 12px 0 0; padding: 8px 10px; border-left: 3px solid #d29922; border-radius: 4px; background: rgb(210 153 34 / 12%); color: #d29922; font-size: 12px; line-height: 18px; }
+@media (prefers-color-scheme: light) {
+  body { background: #f6f7f9; color: #0f1115; }
+  main { background: #fff; border-color: #d7dbe0; }
+  p.sub { color: #61666b; }
+  label { color: #3c4149; }
+  input { background: #fff; border-color: #d7dbe0; color: #0f1115; }
+  p.error { color: #b3261e; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>${title}</h1>
+  <p class="sub">\u8BF7\u8F93\u5165\u7528\u6237\u540D\u548C\u5BC6\u7801\u4EE5\u8BBF\u95EE DSH\u3002</p>
+  ${error}
+  ${insecure}
+  <form method="post" action="${action}" autocomplete="on">
+    <label for="username">\u7528\u6237\u540D</label>
+    <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus>
+    <label for="password">\u5BC6\u7801</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">\u767B\u5F55</button>
+  </form>
+</main>
+</body>
+</html>
+`;
+}
+function loginFailureMessage(reason, retryAfterMs) {
+  if (reason === "locked") {
+    const minutes = Math.max(1, Math.ceil(retryAfterMs / 6e4));
+    return `\u5931\u8D25\u6B21\u6570\u8FC7\u591A\uFF0C\u8BF7\u5728\u7EA6 ${minutes} \u5206\u949F\u540E\u91CD\u8BD5\u3002`;
+  }
+  if (reason === "disabled") return "\u7BA1\u7406\u5458\u5C1A\u672A\u8BBE\u7F6E\u5BC6\u7801\uFF0C\u65E0\u6CD5\u767B\u5F55\u3002";
+  return "\u7528\u6237\u540D\u6216\u5BC6\u7801\u4E0D\u6B63\u786E\u3002";
+}
+
+// src/netaccess.ts
+var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1"]);
+function canonical(value) {
+  let host = value.trim().toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (host.startsWith("::ffff:")) host = host.slice("::ffff:".length);
+  return host;
+}
+function isLoopbackAddress(value) {
+  const host = canonical(value);
+  if (host === "") return false;
+  if (LOOPBACK_HOSTS.has(host)) return true;
+  return /^127\./.test(host);
+}
+function isTrustedProxyPeer(remoteAddress, trusted) {
+  if (remoteAddress === void 0) return false;
+  const peer = canonical(remoteAddress);
+  if (isLoopbackAddress(peer)) return true;
+  for (const candidate of trusted.addresses) {
+    if (canonical(candidate) === peer) return true;
+  }
+  return false;
+}
+function firstValue(header) {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (raw === void 0) return void 0;
+  const first = raw.split(",")[0]?.trim();
+  return first === void 0 || first === "" ? void 0 : first;
+}
+function resolveSecureTransport(input) {
+  if (input.peerTrusted) {
+    const proto = firstValue(input.forwardedProto)?.toLowerCase();
+    if (proto === "https") return true;
+    if (proto === "http") return false;
+  }
+  return input.socketEncrypted;
+}
+function resolveClientAddress(input) {
+  if (input.peerTrusted) {
+    const raw = Array.isArray(input.forwardedFor) ? input.forwardedFor.join(",") : input.forwardedFor;
+    if (raw !== void 0) {
+      const hops = raw.split(",").map((hop) => hop.trim()).filter((hop) => hop !== "");
+      const last = hops[hops.length - 1];
+      if (last !== void 0) return canonical(last);
+    }
+  }
+  return canonical(input.peerAddress ?? "") || "unknown";
+}
+var SECURE_COOKIE_NAME = "__Host-dsh_proxy_session";
+var PLAINTEXT_COOKIE_NAME = "dsh_proxy_session";
+function resolveGate(input) {
+  let hostname = "";
+  let authority = input.host ?? "";
+  try {
+    hostname = new URL(`http://${input.host ?? ""}`).hostname;
+  } catch {
+    hostname = "";
+  }
+  if (authority === "") authority = "localhost";
+  const loopback = isLoopbackAddress(hostname);
+  const secure = input.secure || input.socketEncrypted || loopback;
+  const scheme = secure ? "https" : "http";
+  if (secure) {
+    return {
+      mode: "session",
+      secure: true,
+      cookieName: SECURE_COOKIE_NAME,
+      origin: `${scheme}://${authority}`
+    };
+  }
+  if (input.requireTls) {
+    return { mode: "plaintext-blocked", secure: false, cookieName: PLAINTEXT_COOKIE_NAME, origin: `${scheme}://${authority}` };
+  }
+  const mode = input.cleartextAuth === "basic" ? "basic" : "session";
+  return { mode, secure: false, cookieName: PLAINTEXT_COOKIE_NAME, origin: `${scheme}://${authority}` };
+}
+
 // src/polyfill.ts
 var RANDOM_UUID_POLYFILL = '<script>(function(){try{if(typeof crypto!=="undefined"&&crypto&&typeof crypto.randomUUID!=="function"){crypto.randomUUID=function(){var b=crypto.getRandomValues(new Uint8Array(16));b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;var h="";for(var i=0;i<16;i++){h+=b[i].toString(16).padStart(2,"0")}return h.slice(0,8)+"-"+h.slice(8,12)+"-"+h.slice(12,16)+"-"+h.slice(16,20)+"-"+h.slice(20)}}}catch(e){}})();</script>';
 function injectPolyfill(html, polyfill = RANDOM_UUID_POLYFILL) {
@@ -2810,6 +3186,9 @@ function attachBodyTransform(res, proxyRes, transform) {
 
 // src/proxy.ts
 var AUTH_REALM = "dsh-proxy";
+var AUTH_PATH_PREFIX = "/__dsh-proxy";
+var LOGIN_PATH = `${AUTH_PATH_PREFIX}/login`;
+var LOGOUT_PATH = `${AUTH_PATH_PREFIX}/logout`;
 var PUBLIC_PATHS = /* @__PURE__ */ new Set(["/manifest.webmanifest", "/favicon.svg"]);
 var TOKEN_QUERY = "token";
 function lanAddresses(port) {
@@ -2913,30 +3292,233 @@ function startLanProxy(options) {
     });
     res.end("401 Unauthorized");
   };
+  const gateFor = (req) => {
+    const peerTrusted = isTrustedProxyPeer(req.socket.remoteAddress, {
+      addresses: new Set(options.trustedProxyAddresses ?? [])
+    });
+    const secure = resolveSecureTransport({
+      forwardedProto: req.headers["x-forwarded-proto"],
+      peerTrusted,
+      socketEncrypted: req.socket.encrypted === true
+    });
+    return resolveGate({
+      secure,
+      host: req.headers.host,
+      socketEncrypted: req.socket.encrypted === true,
+      requireTls: options.requireTls === true,
+      cleartextAuth: options.cleartextAuth ?? "login"
+    });
+  };
+  const gateEnforced = () => auth.enabled;
+  const clientAddressFor = (req) => {
+    const peerTrusted = isTrustedProxyPeer(req.socket.remoteAddress, {
+      addresses: new Set(options.trustedProxyAddresses ?? [])
+    });
+    return resolveClientAddress({
+      forwardedFor: req.headers["x-forwarded-for"],
+      peerAddress: req.socket.remoteAddress,
+      peerTrusted
+    });
+  };
+  const loginPageHeaders = (contentType) => ({
+    "content-type": contentType,
+    "cache-control": "no-store, must-revalidate",
+    "referrer-policy": "no-referrer",
+    // The page is self-contained (one inline style block, no script, no frames),
+    // so the policy can be maximally strict.
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY"
+  });
+  const readFormBody = (req, limit = 8 * 1024) => new Promise((resolve3) => {
+    let body = "";
+    let size = 0;
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      size += Buffer.byteLength(chunk);
+      if (size > limit) {
+        resolve3(body);
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on("end", () => resolve3(body));
+    req.on("error", () => resolve3(body));
+  });
+  const crossSiteReason = (req) => {
+    const fetchSite = req.headers["sec-fetch-site"];
+    if (typeof fetchSite === "string") {
+      if (fetchSite === "same-origin" || fetchSite === "none") return null;
+      if (fetchSite === "same-site" || fetchSite === "cross-site") {
+        return `\u6D4F\u89C8\u5668\u62A5\u544A\u6765\u6E90\u4E3A ${fetchSite}\uFF08\u4EC5\u63A5\u53D7\u540C\u6E90\u63D0\u4EA4\uFF09`;
+      }
+    }
+    const origin = req.headers.origin;
+    if (origin === void 0) return null;
+    if (origin === "null") return null;
+    let host;
+    try {
+      host = new URL(origin).host;
+    } catch {
+      return `Origin \u5934\u65E0\u6CD5\u89E3\u6790\uFF1A${origin}`;
+    }
+    const expected = req.headers.host ?? "";
+    if (host !== expected) {
+      return `\u6765\u6E90\u6821\u9A8C\u5931\u8D25\uFF1AOrigin=${host} \u4E0E Host=${expected} \u4E0D\u4E00\u81F4`;
+    }
+    return null;
+  };
+  const isCrossSite = (req) => crossSiteReason(req) !== null;
+  const refuseCleartext = (res) => {
+    res.writeHead(403, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer"
+    });
+    res.end("403 Forbidden \u2014 this proxy requires HTTPS (configure requireTls after putting a TLS reverse proxy in front).");
+  };
+  const serveLoginPage = (res, gate, error) => {
+    const html = renderLoginPage({
+      action: LOGIN_PATH,
+      secure: gate.secure,
+      ...options.loginTitle === void 0 ? {} : { title: options.loginTitle },
+      ...error === void 0 ? {} : { error }
+    });
+    res.writeHead(200, loginPageHeaders("text/html; charset=utf-8"));
+    res.end(html);
+  };
+  const handleAuthRoutes = async (req, res, pathname, gate) => {
+    const store = options.auth;
+    if (store === void 0 || gate.mode !== "session" || !gateEnforced()) return false;
+    if (pathname === LOGIN_PATH) {
+      if (req.method === "GET" || req.method === "HEAD") {
+        serveLoginPage(res, gate);
+        return true;
+      }
+      if (req.method !== "POST") {
+        res.writeHead(405, loginPageHeaders("text/plain; charset=utf-8")).end("405 Method Not Allowed");
+        return true;
+      }
+      const crossSite = crossSiteReason(req);
+      if (crossSite !== null) {
+        log("warn", `dsh-proxy: rejected a login POST \u2014 ${crossSite}`);
+        serveLoginPage(res, gate, `\u8BF7\u6C42\u6765\u6E90\u6821\u9A8C\u5931\u8D25\uFF1A${crossSite}\u3002\u8BF7\u4ECE\u767B\u5F55\u9875\u76F4\u63A5\u767B\u5F55\u3002`);
+        return true;
+      }
+      if (req.headers.origin === void 0 || req.headers.origin === "null") {
+        options.audit?.({
+          at: Date.now(),
+          event: "login-origin-withheld",
+          source: clientAddressFor(req),
+          detail: `sec-fetch-site=${String(req.headers["sec-fetch-site"] ?? "none")} origin=${String(req.headers.origin ?? "absent")}`
+        });
+      }
+      const body = await readFormBody(req);
+      const form = new URLSearchParams(body);
+      const result = store.login({
+        username: form.get("username") ?? "",
+        password: form.get("password") ?? "",
+        source: clientAddressFor(req),
+        userAgent: req.headers["user-agent"] ?? "",
+        expected: { username, password }
+      });
+      if (!result.ok) {
+        serveLoginPage(res, gate, loginFailureMessage(result.reason, result.retryAfterMs));
+        return true;
+      }
+      res.writeHead(303, {
+        ...loginPageHeaders("text/plain; charset=utf-8"),
+        location: "/",
+        "set-cookie": sessionCookie(
+          result.session.token,
+          Math.floor(store.authPolicy.sessionTtlMs / 1e3),
+          gate.cookieName
+        )
+      });
+      res.end();
+      return true;
+    }
+    if (pathname === LOGOUT_PATH) {
+      if (req.method === "POST" && isCrossSite(req)) {
+        res.writeHead(403, loginPageHeaders("text/plain; charset=utf-8")).end("403 Forbidden");
+        return true;
+      }
+      store.logout(readCookie(req.headers.cookie, gate.cookieName));
+      res.writeHead(303, {
+        ...loginPageHeaders("text/plain; charset=utf-8"),
+        location: LOGIN_PATH,
+        "set-cookie": clearedSessionCookie(gate.cookieName)
+      });
+      res.end();
+      return true;
+    }
+    return false;
+  };
   const server = import_node_http.default.createServer((req, res) => {
-    const pathname = new URL(req.url ?? "/", "http://proxy.local").pathname;
+    const url = new URL(req.url ?? "/", "http://proxy.local");
+    const pathname = url.pathname;
     if (req.headers.host !== void 0) publicOrigins.set(req, req.headers.host);
-    if (PUBLIC_PATHS.has(pathname)) {
+    const gate = gateFor(req);
+    void handleAuthRoutes(req, res, pathname, gate).then((handled) => {
+      if (handled) return;
+      if (PUBLIC_PATHS.has(pathname)) {
+        alignOrigin(req);
+        proxy.web(req, res);
+        return;
+      }
+      if (gate.mode === "plaintext-blocked" && gateEnforced()) {
+        options.audit?.({ at: Date.now(), event: "insecure-transport-refused", source: clientAddressFor(req), detail: pathname });
+        refuseCleartext(res);
+        return;
+      }
+      if (!gateEnforced()) {
+        alignOrigin(req);
+        proxy.web(req, res);
+        return;
+      }
+      const session = gate.mode === "session" ? options.auth?.authenticate(readCookie(req.headers.cookie, gate.cookieName)) : null;
+      if (session !== null && session !== void 0) {
+        alignOrigin(req);
+        proxy.web(req, res);
+        return;
+      }
+      if (!auth.isAuthenticated(req.headers.authorization)) {
+        if (gate.mode === "session") {
+          res.writeHead(303, {
+            "cache-control": "no-store",
+            location: LOGIN_PATH
+          });
+          res.end();
+          return;
+        }
+        challenge(res);
+        return;
+      }
       alignOrigin(req);
       proxy.web(req, res);
-      return;
-    }
-    if (!auth.isAuthenticated(req.headers.authorization)) {
-      challenge(res);
-      return;
-    }
-    alignOrigin(req);
-    proxy.web(req, res);
+    });
   });
   const upgradedSockets = /* @__PURE__ */ new Set();
   server.on("upgrade", (req, socket, head) => {
-    if (!auth.isAuthenticated(req.headers.authorization)) {
-      socket.end(`HTTP/1.1 401 Unauthorized\r
+    const gate = gateFor(req);
+    if (!gateEnforced()) {
+      upgradedSockets.add(socket);
+      socket.once("close", () => upgradedSockets.delete(socket));
+      alignOrigin(req);
+      proxy.ws(req, socket, head);
+      return;
+    }
+    const session = gate.mode === "session" ? options.auth?.authenticate(readCookie(req.headers.cookie, gate.cookieName)) : null;
+    if (session === null || session === void 0) {
+      if (!auth.isAuthenticated(req.headers.authorization)) {
+        socket.end(`HTTP/1.1 401 Unauthorized\r
 www-authenticate: Basic realm="${AUTH_REALM}"\r
 Connection: close\r
 \r
 `);
-      return;
+        return;
+      }
     }
     upgradedSockets.add(socket);
     socket.once("close", () => upgradedSockets.delete(socket));
@@ -3068,21 +3650,141 @@ function validateUpdate(payload, currentListenPort, currentUpstreamPort) {
   };
 }
 
+// src/audit.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path3 = require("node:path");
+var AuditTrail = class {
+  filePath;
+  maxBytes;
+  keep;
+  recent = [];
+  constructor(options) {
+    this.filePath = options.filePath;
+    this.maxBytes = options.maxBytes ?? 1024 * 1024;
+    this.keep = options.keep ?? 200;
+    this.recent = this.readFromDisk();
+  }
+  /**
+   * Record one entry: push to the window and append to disk.
+   * @param entry - the event, already free of credentials.
+   */
+  record(entry) {
+    this.recent.push(entry);
+    if (this.recent.length > this.keep) this.recent.splice(0, this.recent.length - this.keep);
+    try {
+      (0, import_node_fs2.mkdirSync)((0, import_node_path3.dirname)(this.filePath), { recursive: true });
+      this.rotateIfNeeded();
+      (0, import_node_fs2.appendFileSync)(this.filePath, `${JSON.stringify(entry)}
+`, "utf8");
+    } catch {
+    }
+  }
+  /** The most recent entries, newest last (the settings UI reverses for display). */
+  list() {
+    return this.recent.slice(-this.keep).map((entry, index) => ({ ...entry, index }));
+  }
+  /** Drop the in-memory window (the on-disk trail is left alone). */
+  clearWindow() {
+    this.recent = [];
+  }
+  /** Move the file aside when it outgrows {@link maxBytes}, keeping one previous generation. */
+  rotateIfNeeded() {
+    let size = 0;
+    try {
+      size = (0, import_node_fs2.statSync)(this.filePath).size;
+    } catch {
+      return;
+    }
+    if (size < this.maxBytes) return;
+    (0, import_node_fs2.renameSync)(this.filePath, `${this.filePath}.1`);
+  }
+  /** Read the tail of the file so a restart keeps its recent history. */
+  readFromDisk() {
+    let text;
+    try {
+      text = (0, import_node_fs2.readFileSync)(this.filePath, "utf8");
+    } catch {
+      return [];
+    }
+    const lines = text.split("\n").filter((line) => line.trim() !== "");
+    const tail = lines.slice(-this.keep);
+    const entries = [];
+    for (const line of tail) {
+      try {
+        const parsed = JSON.parse(line);
+        if (typeof parsed?.at === "number" && typeof parsed?.event === "string") entries.push(parsed);
+      } catch {
+      }
+    }
+    return entries;
+  }
+};
+
+// src/security.ts
+var import_node_fs3 = require("node:fs");
+var import_node_path4 = require("node:path");
+var DEFAULT_SECURITY_SETTINGS = {
+  requireTls: false,
+  // Unified by default: one login page everywhere a cookie can be held.
+  cleartextAuth: "login"
+};
+function isCleartextAuthMode(value) {
+  return value === "login" || value === "basic";
+}
+function normalizeSecuritySettings(raw) {
+  if (typeof raw !== "object" || raw === null) return { ...DEFAULT_SECURITY_SETTINGS };
+  const source = raw;
+  return {
+    requireTls: typeof source.requireTls === "boolean" ? source.requireTls : DEFAULT_SECURITY_SETTINGS.requireTls,
+    cleartextAuth: isCleartextAuthMode(source.cleartextAuth) ? source.cleartextAuth : DEFAULT_SECURITY_SETTINGS.cleartextAuth
+  };
+}
+var SecuritySettingsFile = class {
+  constructor(filePath) {
+    this.filePath = filePath;
+  }
+  filePath;
+  read() {
+    let text;
+    try {
+      text = (0, import_node_fs3.readFileSync)(this.filePath, "utf8");
+    } catch {
+      return { ...DEFAULT_SECURITY_SETTINGS };
+    }
+    try {
+      return normalizeSecuritySettings(JSON.parse(text));
+    } catch {
+      return { ...DEFAULT_SECURITY_SETTINGS };
+    }
+  }
+  write(settings) {
+    (0, import_node_fs3.mkdirSync)((0, import_node_path4.dirname)(this.filePath), { recursive: true });
+    const temp = `${this.filePath}.tmp`;
+    (0, import_node_fs3.writeFileSync)(temp, `${JSON.stringify(settings, null, 2)}
+`, "utf8");
+    (0, import_node_fs3.renameSync)(temp, this.filePath);
+  }
+};
+
 // src/contract.ts
 var LAN_PROXY_PATH = "/api/dsh-proxy";
 var ENDPOINT_STATUS = "status";
 var ENDPOINT_UPDATE = "update";
 var ENDPOINT_START = "start";
 var ENDPOINT_STOP = "stop";
+var ENDPOINT_AUTH = "auth";
+var ENDPOINT_AUDIT = "audit";
+var ENDPOINT_AUTH_REVOKE = "auth-revoke";
+var ENDPOINT_SECURITY = "security";
 function isLanExposed(listenHost, proxyListening, authEnabled) {
   return proxyListening && !authEnabled && isLanVisibleHost(listenHost);
 }
-var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1"]);
+var LOOPBACK_HOSTS2 = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1"]);
 function isLanVisibleHost(host) {
   let value = host.trim().toLowerCase();
   if (value.startsWith("[") && value.endsWith("]")) value = value.slice(1, -1);
   if (value.startsWith("::ffff:")) value = value.slice("::ffff:".length);
-  if (value === "" || LOOPBACK_HOSTS.has(value)) return false;
+  if (value === "" || LOOPBACK_HOSTS2.has(value)) return false;
   return !value.startsWith("127.");
 }
 
@@ -3094,6 +3796,13 @@ var ProxyController = class {
     this.opts = opts;
     this.log = opts.log;
     this.settings = new RuntimeSettingsFile(opts.settingsFile);
+    this.audit = opts.auditFile === void 0 ? null : new AuditTrail({ filePath: opts.auditFile });
+    this.security = opts.securityFile === void 0 ? null : new SecuritySettingsFile(opts.securityFile);
+    this.securitySettings = this.security?.read() ?? { ...DEFAULT_SECURITY_SETTINGS };
+    this.auth = new AuthState({
+      ...opts.authPolicy === void 0 ? {} : { policy: opts.authPolicy },
+      audit: (entry) => this.audit?.record(entry)
+    });
     this.options = { ...opts.base };
     const persisted = this.settings.read();
     if (persisted.listenPort !== void 0) this.options.listenPort = persisted.listenPort;
@@ -3108,6 +3817,14 @@ var ProxyController = class {
   settings;
   log;
   options;
+  /** Login-gate sessions; deliberately in-memory so a restart drops them. */
+  auth;
+  /** Durable audit trail (absent when no path was configured). */
+  audit;
+  /** Persisted transport policy (`requireTls`); absent when no path was configured. */
+  security;
+  /** Effective transport policy, kept in sync with the file. */
+  securitySettings;
   /** Whether a persisted runtime override exists (drives the status flag). */
   persisted() {
     const current = this.settings.read();
@@ -3129,6 +3846,12 @@ var ProxyController = class {
       upstreamPort: this.options.upstreamPort,
       username: this.options.username,
       password: this.options.password,
+      auth: this.auth,
+      ...this.opts.trustedProxyAddresses === void 0 ? {} : { trustedProxyAddresses: this.opts.trustedProxyAddresses },
+      requireTls: this.requireTls(),
+      cleartextAuth: this.cleartextAuth(),
+      ...this.opts.loginTitle === void 0 ? {} : { loginTitle: this.opts.loginTitle },
+      audit: (entry) => this.audit?.record(entry),
       ...this.opts.authenticatedUrl === void 0 ? {} : { authenticatedUrl: this.opts.authenticatedUrl },
       log
     });
@@ -3141,7 +3864,10 @@ var ProxyController = class {
       log("info", `dsh-proxy: \u672C\u673A\u8BBF\u95EE ${urls.local}`);
       for (const url of urls.lan) log("info", `dsh-proxy: \u5C40\u57DF\u7F51\u8BBF\u95EE ${url}`);
       if (this.options.username !== "" && this.options.password !== "") {
-        log("info", `dsh-proxy: password login enabled (username: ${this.options.username}) \u2014 browser Basic Auth`);
+        log("info", `dsh-proxy: password login enabled (username: ${this.options.username})`);
+        if (!this.requireTls() && this.cleartextAuth() === "login" && !isLoopbackAddress(this.options.listenHost)) {
+          log("warn", 'dsh-proxy: \u660E\u6587\u767B\u5F55\u5DF2\u542F\u7528/SECURITY NOTE \u2014 cleartext visitors get a session cookie WITHOUT Secure/__Host- (a Secure cookie is not stored over http); anyone on the same network can sniff or plant it. Put a TLS reverse proxy in front, or set cleartextAuth to "basic" / requireTls to true.');
+        }
       } else {
         const lanUrls = urls.lan.length > 0 ? urls.lan.join("  ") : `http://${this.options.listenHost}:${bound}`;
         const reason = this.options.username !== "" || this.options.password !== "" ? "only one of username/password is set, so password login is OFF" : "username and password are both empty, so password login is OFF";
@@ -3157,6 +3883,86 @@ var ProxyController = class {
         message: `\u65E0\u6CD5\u76D1\u542C ${this.options.listenHost}:${this.options.listenPort}\uFF1A${message}\u3002\u8BE5\u7AEF\u53E3\u53EF\u80FD\u5DF2\u88AB\u5360\u7528\uFF0C\u8BF7\u66F4\u6362\u4EE3\u7406\u670D\u52A1\u7AEF\u53E3\u6216\u91CA\u653E\u8BE5\u7AEF\u53E3\u540E\u91CD\u8BD5\u3002`
       };
     }
+  }
+  /**
+   * Effective transport policy: the persisted override wins, then the cordis
+   * config, then the compatible default (cleartext allowed).
+   */
+  requireTls() {
+    if (this.security !== null) return this.securitySettings.requireTls;
+    return this.opts.requireTls ?? false;
+  }
+  /** Authentication mode currently in force for allowed cleartext traffic. */
+  cleartextAuth() {
+    return this.securitySettings.cleartextAuth;
+  }
+  /** The authentication surface for the settings page. */
+  authView(currentToken) {
+    return {
+      sessions: this.auth.listSessions(currentToken),
+      lockouts: this.auth.lockedSources(),
+      policy: this.auth.authPolicy,
+      requireTls: this.requireTls(),
+      cleartextAuth: this.cleartextAuth(),
+      loginEnabled: this.options.username !== "" && this.options.password !== "",
+      loginPath: LOGIN_PATH,
+      logoutPath: LOGOUT_PATH
+    };
+  }
+  /** Recent audit entries, newest first (what an operator would want on screen). */
+  auditView() {
+    const entries = this.audit?.list() ?? [];
+    return [...entries].reverse().map(({ at, event, source, detail }) => ({
+      at,
+      event,
+      source,
+      ...detail === void 0 ? {} : { detail }
+    }));
+  }
+  /**
+   * Revoke one session, or every session except the caller's.
+   * @param payload - `{ id }` from the settings page; `all` keeps the caller.
+   * @param currentToken - the caller's own session token, so it is never dropped by `all`.
+   * @returns how many sessions were revoked.
+   */
+  revokeSessions(payload, currentToken) {
+    const id = payload?.id;
+    if (typeof id !== "string" || id === "") return { revoked: 0 };
+    if (id === "all") return { revoked: this.auth.revokeAllSessions(currentToken) };
+    return { revoked: this.auth.revokeSession(id) ? 1 : 0 };
+  }
+  /**
+   * Persist the transport policy. A change takes effect on the next restart, so
+   * this reports whether a restart is needed instead of silently not applying it.
+   * @param payload - the requested `requireTls`.
+   */
+  updateSecurity(payload) {
+    const input = payload;
+    if (input === null || typeof input !== "object") return { ok: false, message: "\u8BF7\u6C42\u4F53\u5FC5\u987B\u662F\u5BF9\u8C61" };
+    const next = { ...this.securitySettings };
+    if (input.requireTls !== void 0) {
+      if (typeof input.requireTls !== "boolean") return { ok: false, message: "requireTls \u5FC5\u987B\u662F\u5E03\u5C14\u503C" };
+      next.requireTls = input.requireTls;
+    }
+    if (input.cleartextAuth !== void 0) {
+      if (!isCleartextAuthMode(input.cleartextAuth)) {
+        return { ok: false, message: "cleartextAuth \u53EA\u80FD\u662F 'login' \u6216 'basic'" };
+      }
+      next.cleartextAuth = input.cleartextAuth;
+    }
+    if (input.requireTls === void 0 && input.cleartextAuth === void 0) {
+      return { ok: false, message: "\u6CA1\u6709\u53EF\u4FDD\u5B58\u7684\u4FEE\u6539" };
+    }
+    const changed = next.requireTls !== this.requireTls() || next.cleartextAuth !== this.securitySettings.cleartextAuth;
+    this.securitySettings = next;
+    this.security?.write(next);
+    this.log("info", `dsh-proxy: transport policy updated (requireTls=${String(next.requireTls)}, cleartextAuth=${next.cleartextAuth})`);
+    return {
+      ok: true,
+      requireTls: next.requireTls,
+      cleartextAuth: next.cleartextAuth,
+      restartRequired: changed
+    };
   }
   /** Stop the proxy and every upgraded socket. */
   async stop() {
@@ -3205,6 +4011,7 @@ var ProxyController = class {
       // The settings page warns in red about this one; the rule lives in the
       // shared contract so the host and the section can never disagree.
       lanExposed: isLanExposed(this.options.listenHost, this.boundPort !== null, authEnabled),
+      authSessionCount: this.auth.sessionCount,
       persisted: this.persisted()
     };
   }
@@ -3303,14 +4110,16 @@ var Config = Schema.object({
   upstreamHost: Schema.string().default("127.0.0.1"),
   upstreamPort: Schema.natural().max(65535).default(0),
   username: Schema.string().default(""),
-  password: Schema.string().default("")
+  password: Schema.string().default(""),
+  trustedProxies: Schema.array(Schema.string()).default([]),
+  requireTls: Schema.boolean().default(false)
 });
 function failure(message) {
   const error = { code: "bad-request", message, details: { issues: [] } };
   return { ok: false, error };
 }
-function createLanProxyRoute(controller) {
-  const dispatch = async (endpoint, payload) => {
+function createLanProxyRoute(controller, currentSessionToken) {
+  const dispatch = async (endpoint, payload, currentToken) => {
     if (endpoint === ENDPOINT_STATUS) {
       return { ok: true, value: await controller.refreshStatus() };
     }
@@ -3329,6 +4138,20 @@ function createLanProxyRoute(controller) {
       if (outcome.ok) return { ok: true, value: outcome.result };
       return failure(outcome.message);
     }
+    if (endpoint === ENDPOINT_AUTH) {
+      return { ok: true, value: controller.authView(currentToken) };
+    }
+    if (endpoint === ENDPOINT_AUDIT) {
+      return { ok: true, value: controller.auditView() };
+    }
+    if (endpoint === ENDPOINT_AUTH_REVOKE) {
+      return { ok: true, value: controller.revokeSessions(payload, currentToken) };
+    }
+    if (endpoint === ENDPOINT_SECURITY) {
+      const outcome = controller.updateSecurity(payload);
+      if (outcome.ok) return { ok: true, value: outcome };
+      return failure(outcome.message);
+    }
     return failure(`unknown endpoint ${JSON.stringify(endpoint)}`);
   };
   return async (request) => {
@@ -3341,7 +4164,11 @@ function createLanProxyRoute(controller) {
     if (typeof body?.endpoint !== "string" || body.endpoint.length === 0) {
       return Response.json(failure("body has no endpoint"), { status: 400 });
     }
-    const result = await dispatch(body.endpoint, body.payload);
+    const result = await dispatch(
+      body.endpoint,
+      body.payload,
+      currentSessionToken === void 0 ? void 0 : currentSessionToken(request)
+    );
     return Response.json(result);
   };
 }
@@ -3360,6 +4187,11 @@ function apply(ctx, config) {
       password: resolved.password
     },
     settingsFile: dshHomePath("dsh-proxy.json"),
+    auditFile: dshHomePath("dsh-proxy-audit.jsonl"),
+    securityFile: dshHomePath("dsh-proxy-security.json"),
+    trustedProxyAddresses: resolved.trustedProxies,
+    requireTls: resolved.requireTls,
+    loginTitle: "DSH \u5C40\u57DF\u7F51\u4EE3\u7406",
     // DSH mints its browser-session cookie only through the tokenized URL it
     // prints at startup, which points at loopback. Rebuild that URL for the
     // authority the browser actually used so a LAN visitor's first index
@@ -3386,13 +4218,17 @@ function apply(ctx, config) {
       path: LAN_PROXY_PATH,
       methods: ["POST"],
       requestBody: "buffered",
-      fetch: createLanProxyRoute(controller)
+      // The caller's own session cookie (when the page came through the proxy's
+      // login gate) identifies which session must survive a "revoke others".
+      fetch: createLanProxyRoute(controller, (request) => readCookie(request.headers.get("cookie") ?? void 0, SESSION_COOKIE))
     }),
     "dsh-proxy.settings-route"
   );
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  AuditTrail,
+  AuthState,
   Config,
   apply,
   createLanProxyRoute,
