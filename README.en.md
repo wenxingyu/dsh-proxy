@@ -9,7 +9,8 @@ The DSH server deliberately refuses `--host 0.0.0.0` (it would expose remote cod
 ## Features
 
 - **Full HTTP + WebSocket forwarding** — real-time task state and log streams keep working.
-- **Native Basic Auth (off by default)** — the browser's own credential dialog; no custom login page, no session cookies. Username and password default to empty (open LAN access); setting **both** in the settings page turns password login on (including on WebSocket handshakes).
+- **Native Basic Auth (off by default)** — the browser's own credential dialog; no custom login page, no session cookies. Username and password default to empty (open LAN access: anyone who can reach the port is in); setting **both** in the settings page turns password login on (including on WebSocket handshakes).
+- **The open state is stated loudly** — while the proxy listens on a network address without a password, the web UI raises a notice on every page load naming the exposed address and the consequence, startup logs a SECURITY WARNING, and the settings page flags it in red. The notice keeps no memory, so it cannot be dismissed away.
 - **Settings page** — DSH settings → "LAN Proxy": status lights, start/stop, and edits to the listen port, username, and password (persisted to `$DSH_HOME/dsh-proxy.json`).
 - **Automatic LAN login** — DSH's browser session needs a cookie minted from its per-process launch token, and the token URL `dsh web` prints is loopback-only. The plugin completes that exchange for the address you actually used, so the first LAN visit just works.
 - **In-browser directory picker** — "Add workspace" opens the chooser inside the page instead of an OS dialog on the host screen.
@@ -38,7 +39,7 @@ Then **restart `dsh web`** (Ctrl+C, run it again): the startup log prints the li
 
 ## Usage
 
-Browse to `http://<your-LAN-IP>:3081` → the browser shows its native Basic Auth dialog (or goes straight in while no credentials are set) → the DSH UI loads. The browser remembers the credentials and session, so later visits open directly.
+Browse to `http://<your-LAN-IP>:3081` → the browser shows its native Basic Auth dialog once credentials are set (it goes straight in while they are empty, which the settings page and the startup log warn about) → the DSH UI loads. The browser remembers the credentials and session, so later visits open directly.
 
 Configuration, the settings page, the directory picker, and development notes live in [`dsh-proxy/README.md`](dsh-proxy/README.md).
 

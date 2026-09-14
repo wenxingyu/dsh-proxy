@@ -3,7 +3,8 @@
 A DeepSeek Harness plugin that exposes the local DSH web app (default `127.0.0.1:3080`) on a **second, authenticated port** for LAN access.
 
 - **HTTP + WebSocket reverse proxy** — real-time streams keep working.
-- **Native Basic Auth (off by default)** — the **browser's own credential dialog**, no custom login page, no session cookies. Username and password default to empty (open LAN access); setting **both** in the settings page turns password login on, after which unauthenticated requests are answered with `401 + WWW-Authenticate: Basic` and the browser pops its native dialog. After a successful login the browser caches the credentials for the origin and sends them automatically (including on WebSocket handshakes).
+- **Native Basic Auth (off by default)** — the **browser's own credential dialog**, no custom login page, no session cookies. Username and password default to empty (open LAN access: anyone who can reach the port is in); setting **both** in the settings page turns password login on, after which unauthenticated requests are answered with `401 + WWW-Authenticate: Basic` and the browser pops its native dialog. After a successful login the browser caches the credentials for the origin and sends them automatically (including on WebSocket handshakes).
+- **A popup on every page load while it is open** — when the proxy is actually listening on a network address with no password, the browser half raises a frame-wide notice ("⚠️ The LAN proxy is open without a password") naming the exposed address and the consequence; startup logs a SECURITY WARNING and the settings page flags password login in red as well. Behavior is unchanged; the open state just stops being silent. The notice keeps **no memory at all** — "Got it" closes only the current one, and the next open/refresh warns again, because an unauthenticated network listener is a standing risk rather than a one-off event.
 - **Settings page** — DSH settings → "LAN Proxy": shows the running ports and whether password login is enabled, **starts/stops the proxy**, and edits the proxy listen port, username, and password; saving persists the patch to `$DSH_HOME/dsh-proxy.json` and immediately restarts the forwarding service.
 - **Out-of-the-box compatibility fixes** — `Host`/`Origin` rewriting (passes the DSH `/api` same-origin trust fence from the LAN) and a `crypto.randomUUID` polyfill injected into proxied HTML (non-secure LAN contexts lack it, which would break every RPC).
 - **In-browser directory picker** — DSH mounts the OS chooser whenever the web app is loopback-bound (`dsh-host-directory-picker-auto`'s rule), so "add workspace" opened a dialog on the HOST screen that a remote visitor cannot see. The plugin pins the in-app browse interaction instead, so the picker renders in the page on any device.
@@ -46,7 +47,10 @@ All knobs have schema defaults; override them in the **profile's `cordis.patch.y
     password: ''                # login password (default empty = password login off)
 ```
 
-- Default `username` and `password` are both empty = **password login off** (open LAN access — not recommended). Password login turns on **only when both are set**; setting just one keeps it off (the settings page warns).
+- Default `username` and `password` are both empty = **password login off**: anyone who can reach the port gets straight in (open LAN access — not recommended). Password login turns on **only when both are set**; setting just one keeps it off.
+- Listening itself is unchanged by missing credentials: `listenHost: '0.0.0.0'` still binds the LAN, so you can reach the settings page from another device and set the credentials there. What changes is that this "network-reachable and password-free" state is now **stated loudly** — a one-time popup in the web UI, a startup SECURITY WARNING, a red banner in the settings page, and the `lanExposed` field on the status endpoint.
+- The popup rides the framework's `shell.overlay` seat: it is **not a modal** (the app stays usable; only the card takes clicks) and it asks the status endpoint at most once per page load.
+- Repeat policy: **every page load** (open or refresh) re-warns; nothing is written to `localStorage` and there is no "already seen" state, so the dismissal cannot silence it. Within one page load the status endpoint is still queried at most once (a remounting frame must not turn the alert into a poll).
 
 ## Settings page (port / credentials / start-stop)
 
@@ -86,12 +90,14 @@ pnpm run smoke   # full live smoke test against a running DSH on 127.0.0.1:3080
 ## Authentication details
 
 - **Enablement**: password login is active only when `username` AND `password` are both non-empty (defaults are empty = open access); setting just one keeps it off.
+- **Exposure flag**: `status.lanExposed` is `true` exactly when the listener is up, bound to a non-loopback host, and password login is off — i.e. the LAN surface is open. The web popup, the settings page's red badge and warning, and the host's SECURITY WARNING all read this one flag. It describes risk only; it never changes what is bound.
 - **Mechanism**: HTTP Basic Auth via the browser's native dialog — every unauthenticated request (page, `/api/*`, scripts) gets `401 + WWW-Authenticate: Basic realm="dsh-proxy"`; WebSocket rejections carry the same header. There is **no custom login page and no session cookie**; after a successful login the browser caches the credentials per origin and sends them automatically (including on WebSocket handshakes).
 - **Public static files**: `/manifest.webmanifest` and `/favicon.svg` bypass the gate — browsers fetch them in credential-less contexts (PWA manifest, favicon), so requiring authentication would 401 them. They carry no secrets.
 - Credential comparison is constant-time (`timingSafeEqual`).
 
 ## Security notes
 
-- **The LAN surface is OPEN by default** (empty username/password). Set **both** credentials in the settings page as soon as possible.
+- **The LAN surface is OPEN by default** (empty username/password). Set **both** credentials in the settings page as soon as possible — the page marks this state in red and the startup log warns about it.
+- The warning is deliberately tied to the real condition: a loopback-only bind is not flagged (no exposure), and neither is a stopped service.
 - Once password login is enabled, DSH's `/api` trust fence sees the rewritten loopback `Host`, so **privileged RPCs (settings/credentials) are reachable from the LAN** — the Basic Auth gate is the only barrier.
 - Browser-cached Basic credentials are NOT invalidated by a password change: the old credentials get a 401 and the dialog reappears; enter the new password. To fully clear them, remove the site's saved password in the browser.
