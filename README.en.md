@@ -24,10 +24,10 @@ The DSH server deliberately refuses `--host 0.0.0.0` (it would expose remote cod
 
 ## Install
 
-**Online install (recommended)** — directly from GitHub, no need to download the repository:
+**Online install (recommended)** — directly from GitHub, no need to download the repository. The command pins the released version (`v0.1.4`):
 
 ```bash
-dsh plugin --profile web add github:wenxingyu/dsh-proxy#master
+dsh plugin --profile web add github:wenxingyu/dsh-proxy#v0.1.4
 ```
 
 **Local install** (repository cloned/downloaded on this machine):

@@ -24,10 +24,10 @@ DSH 服务端**故意拒绝** `--host 0.0.0.0`（避免把 RCE 直接暴露到�
 
 ## 安装
 
-**在线安装（推荐）**——直接从 GitHub 安装（无需下载仓库）：
+**在线安装（推荐）**——直接从 GitHub 安装已发布版本（无需下载仓库，命令固定到 `v0.1.4`）：
 
 ```bash
-dsh plugin --profile web add github:wenxingyu/dsh-proxy#master
+dsh plugin --profile web add github:wenxingyu/dsh-proxy#v0.1.4
 ```
 
 **本地安装**（仓库已克隆/下载到本机）：
