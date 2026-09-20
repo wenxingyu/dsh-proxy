@@ -30,7 +30,7 @@ dsh plugin --profile web add github:wenxingyu/dsh-proxy#master
 dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 ```
 
-安装后包名为 **`@wenxingyu/dsh-proxy`**（scoped，带用户名前缀），`dsh plugin ls` 中显示为 `@wenxingyu/dsh-proxy@0.1.3`。
+安装后包名为 **`@wenxingyu/dsh-proxy`**（scoped，带用户名前缀），`dsh plugin ls` 中显示为 `@wenxingyu/dsh-proxy@0.1.4`。
 
 安装后**重启 `dsh web`**（Ctrl+C 后重新运行）即生效。若 3081 被占用（例如另一个 dsh-proxy 实例还在运行），先停掉它，或在配置里换一个端口。
 

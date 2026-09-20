@@ -30,7 +30,7 @@ dsh plugin --profile web add github:wenxingyu/dsh-proxy#master
 dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 ```
 
-The installed package is **`@wenxingyu/dsh-proxy`** (scoped, with the username prefix) and shows up as `@wenxingyu/dsh-proxy@0.1.3` in `dsh plugin ls`.
+The installed package is **`@wenxingyu/dsh-proxy`** (scoped, with the username prefix) and shows up as `@wenxingyu/dsh-proxy@0.1.4` in `dsh plugin ls`.
 
 Then **restart `dsh web`**. If port 3081 is taken (e.g. another dsh-proxy instance is still running), stop it first or change `listenPort` below.
 
