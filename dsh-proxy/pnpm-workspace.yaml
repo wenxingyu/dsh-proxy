@@ -1,4 +1,11 @@
 packages:
   - .
 
+# pnpm 11 reads build-script approvals from this file, not from the "pnpm"
+# field in package.json. esbuild's install script links its platform binary, so
+# it has to be allowed explicitly; otherwise pnpm blocks the build, fails the
+# dependency check, and rewrites this file with an `allowBuilds` placeholder.
+allowBuilds:
+  esbuild: true
+
 autoInstallPeers: false
